@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>App — Ng Wei Xiang</title>
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+</head>
+<body>
+<div id="nav"></div>
+<section class="hero" style="padding:3.5rem 0 2rem">
+  <div class="wrap" id="head"><p class="muted">Loading…</p></div>
+</section>
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="hero-grid" style="align-items:start">
+      <div>
+        <h2 style="font-size:1.5rem">What's included</h2>
+        <ul class="feat" id="features"></ul>
+        <p id="desc" class="muted" style="margin-top:1.4rem"></p>
+        <p id="demo"></p>
+      </div>
+      <div>
+        <h2 style="font-size:1.5rem">Choose a plan</h2>
+        <div class="plans" id="plans" style="grid-template-columns:1fr"></div>
+      </div>
+    </div>
+  </div>
+</section>
+<div id="footer"></div>
+<script src="app.js"></script>
+<script>
+(async () => {
+  const { sb, $, esc, rm, billingLabel, mountChrome, buyPlan } = NG;
+  mountChrome();
+  const slug = new URLSearchParams(location.search).get('app');
+  const { data: t } = await sb.from('templates').select('*').eq('slug', slug).single();
+  if (!t) { $('#head').innerHTML = '<h1>App not found</h1><a class="btn btn-primary" href="index.html">Back to all apps</a>'; return; }
+  document.title = `${t.name} — ${NGWX.BRAND}`;
+  const soon = /soon/i.test(t.badge || '');
+  $('#head').innerHTML = `<a class="small muted" href="index.html#apps" style="text-decoration:none">← All apps</a>
+    <div class="cat" style="margin-top:1rem;font-size:.8rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">${esc(t.category || '')}</div>
+    <h1 style="font-size:clamp(2rem,4vw,3rem)">${esc(t.name)}</h1>
+    <p class="lead" style="font-size:1.1rem;color:var(--muted);max-width:60ch">${esc(t.tagline || '')}</p>`;
+  $('#features').innerHTML = (t.features || []).map((f) => `<li>${esc(f)}</li>`).join('');
+  $('#desc').textContent = t.description || '';
+  if (t.demo_url) $('#demo').innerHTML = `<a class="btn btn-ghost" href="${esc(t.demo_url)}" target="_blank" rel="noopener">Open live demo ↗</a>`;
+  const { data: plans } = await sb.from('plans').select('*').eq('template_id', t.id).eq('active', true).order('sort');
+  $('#plans').innerHTML = (plans || []).map((p) => `<div class="plan ${p.highlight ? 'highlight' : ''}">
+      ${p.highlight ? '<span class="tag">Best value</span>' : ''}
+      <h3>${esc(p.name)}</h3>
+      <div class="price">${rm(p.price_rm)} <small>${billingLabel(p.billing)}</small></div>
+      <p class="muted small" style="margin:0">${esc(p.description || '')}</p>
+      <ul class="feat">${(p.features || []).map((f) => `<li>${esc(f)}</li>`).join('')}</ul>
+      ${soon
+        ? `<a class="btn btn-ghost btn-block" href="https://wa.me/${NGWX.WHATSAPP}?text=${encodeURIComponent('Hi, I want to join the waitlist for ' + t.name)}" target="_blank" rel="noopener">Join waitlist</a>`
+        : `<button class="btn ${p.highlight ? 'btn-accent' : 'btn-primary'} btn-block" data-plan="${p.id}">${p.billing === 'one_time' ? 'Buy once' : 'Subscribe'}</button>`}
+    </div>`).join('') || '<p class="muted">No plans available yet.</p>';
+  $('#plans').addEventListener('click', (e) => { const b = e.target.closest('button[data-plan]'); if (b) buyPlan(b.dataset.plan); });
+})();
+</script>
+</body>
+</html>

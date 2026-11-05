@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My account — Ng Wei Xiang</title>
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+</head>
+<body>
+<div id="nav"></div>
+
+<!-- Signed out -->
+<section id="auth" class="hidden">
+  <div class="wrap">
+    <div class="card auth-box">
+      <h2 id="auth-title">Sign in</h2>
+      <p class="muted small" id="auth-sub">Use your email and a password. New here? Create an account below.</p>
+      <div id="auth-msg"></div>
+      <form class="form" id="auth-form">
+        <label id="name-wrap" class="hidden">Your name<input name="full_name" autocomplete="name"></label>
+        <label>Email<input name="email" type="email" required autocomplete="email"></label>
+        <label>Password<input name="password" type="password" required minlength="8" autocomplete="current-password"></label>
+        <button class="btn btn-primary btn-block" id="auth-btn">Sign in</button>
+      </form>
+      <p class="small muted" style="margin-top:1rem;text-align:center">
+        <a href="#" id="toggle-mode">Create an account</a> · <a href="#" id="forgot">Forgot password</a>
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- Signed in -->
+<section id="dash" class="hidden">
+  <div class="wrap">
+    <div class="section-head">
+      <div><h2>My apps</h2><p class="muted" id="hello"></p></div>
+      <div class="actions"><button class="btn btn-ghost btn-sm" id="portal">Manage billing</button><button class="btn btn-ghost btn-sm" id="signout">Sign out</button></div>
+    </div>
+    <div id="notice"></div>
+    <div class="grid" id="apps"><p class="muted">Loading…</p></div>
+
+    <h2 style="margin-top:3rem">Payments</h2>
+    <div class="table-wrap"><table><thead><tr><th>Date</th><th>App</th><th>Plan</th><th>Amount</th><th>Status</th><th>Renews</th></tr></thead><tbody id="orders"></tbody></table></div>
+
+    <h2 style="margin-top:3rem">Profile</h2>
+    <form class="form card" id="profile" style="max-width:560px">
+      <div class="row2"><label>Name<input name="full_name"></label><label>Company<input name="company"></label></div>
+      <div class="row2"><label>Phone<input name="phone"></label><label>Email<input name="email" disabled></label></div>
+      <button class="btn btn-primary" style="justify-self:start">Save profile</button>
+    </form>
+  </div>
+</section>
+
+<!-- Setup modal -->
+<div class="modal hidden" id="setup-modal">
+  <div class="box">
+    <h3>Set up <span id="setup-app"></span></h3>
+    <p class="muted small">This is everything I need to deploy your copy. You can edit it until deployment starts.</p>
+    <form class="form" id="setup-form">
+      <div class="row2"><label>Business name<input name="business_name" required></label><label>Preferred domain / subdomain<input name="domain" placeholder="e.g. order.mybusiness.com"></label></div>
+      <div class="row2"><label>Brand colour<input name="colour" type="color" value="#16479e"></label><label>Logo link ( Google Drive, Dropbox… )<input name="logo_url" placeholder="https://"></label></div>
+      <div class="row2"><label>Contact phone / WhatsApp<input name="contact_phone"></label><label>Contact email<input name="contact_email" type="email"></label></div>
+      <label>Business address<input name="address"></label>
+      <label>Anything else I should know ( products, team size, existing systems )<textarea name="notes"></textarea></label>
+      <div class="actions"><button class="btn btn-accent">Submit setup details</button><button type="button" class="btn btn-ghost" id="setup-cancel">Cancel</button></div>
+    </form>
+  </div>
+</div>
+
+<div id="footer"></div>
+<script src="app.js"></script>
+<script>
+(async () => {
+  const { sb, $, $$, esc, rm, billingLabel, fmtDate, toast, mountChrome, callFn, buyPlan } = NG;
+  await mountChrome();
+  const q = new URLSearchParams(location.search);
+  let mode = 'in';
+  const setMode = (m) => { mode = m; $('#auth-title').textContent = m === 'in' ? 'Sign in' : 'Create your account'; $('#auth-btn').textContent = m === 'in' ? 'Sign in' : 'Create account'; $('#name-wrap').classList.toggle('hidden', m === 'in'); $('#toggle-mode').textContent = m === 'in' ? 'Create an account' : 'I already have an account'; };
+  $('#toggle-mode').onclick = (e) => { e.preventDefault(); setMode(mode === 'in' ? 'up' : 'in'); };
+  const msg = (t, k = 'err') => $('#auth-msg').innerHTML = t ? `<div class="msg ${k}">${esc(t)}</div>` : '';
+  if (q.get('next') === 'buy') { setMode('up'); msg('Create an account ( or sign in ) to continue to checkout.', 'info'); }
+
+  $('#auth-form').onsubmit = async (e) => {
+    e.preventDefault(); msg('');
+    const f = new FormData(e.target); const email = f.get('email'), password = f.get('password');
+    $('#auth-btn').disabled = true;
+    try {
+      if (mode === 'up') {
+        const { error } = await sb.auth.signUp({ email, password, options: { data: { full_name: f.get('full_name') } } });
+        if (error) throw error;
+        const { error: e2 } = await sb.auth.signInWithPassword({ email, password });
+        if (e2) { msg('Account created — check your email to confirm, then sign in.', 'ok'); setMode('in'); return; }
+      } else {
+        const { error } = await sb.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      }
+      const pending = sessionStorage.getItem('ngwx.pendingPlan');
+      if (pending) { sessionStorage.removeItem('ngwx.pendingPlan'); await buyPlan(pending); return; }
+      location.replace('account.html');
+    } catch (err) { msg(err.message); } finally { $('#auth-btn').disabled = false; }
+  };
+  $('#forgot').onclick = async (e) => { e.preventDefault(); const email = $('#auth-form [name=email]').value; if (!email) return msg('Type your email first.'); const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.href.split('?')[0] }); msg(error ? error.message : 'Reset link sent — check your inbox.', error ? 'err' : 'ok'); };
+
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) { $('#auth').classList.remove('hidden'); return; }
+  $('#dash').classList.remove('hidden');
+  if (q.get('paid')) $('#notice').innerHTML = '<div class="msg ok">Payment received — thank you! Fill in the setup form on your new app below and I\'ll get started. It can take a minute for the payment to show here; refresh if you don\'t see it yet.</div>';
+  if (q.get('cancelled')) $('#notice').innerHTML = '<div class="msg info">Checkout cancelled — nothing was charged.</div>';
+  $('#signout').onclick = async () => { await sb.auth.signOut(); location.replace('index.html'); };
+  $('#portal').onclick = async () => { try { const { url } = await callFn('billing-portal', { return_url: location.href.split('?')[0] }); location.href = url; } catch (e) { alert(e.message); } };
+
+  // Profile
+  const { data: prof } = await sb.from('profiles').select('*').eq('id', user.id).single();
+  $('#hello').textContent = `Signed in as ${user.email}`;
+  const pf = $('#profile'); ['full_name', 'company', 'phone'].forEach((k) => pf[k].value = prof?.[k] || ''); pf.email.value = user.email;
+  pf.onsubmit = async (e) => { e.preventDefault(); const { error } = await sb.from('profiles').upsert({ id: user.id, email: user.email, full_name: pf.full_name.value, company: pf.company.value, phone: pf.phone.value }); toast(error ? error.message : 'Profile saved'); };
+
+  // Orders + deployments
+  const [{ data: orders }, { data: deps }, { data: templates }] = await Promise.all([
+    sb.from('orders').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
+    sb.from('deployments').select('*').eq('user_id', user.id),
+    sb.from('templates').select('id,name,slug'),
+  ]);
+  const tname = (id) => templates?.find((t) => t.id === id)?.name || '';
+  const STATUS_TEXT = { awaiting_details: 'Waiting for your setup details', queued: 'Details received — in the queue', deploying: 'Being deployed', live: 'Live', suspended: 'Suspended — check your billing' };
+  const visible = (orders || []).filter((o) => o.status !== 'pending');
+  $('#apps').innerHTML = visible.map((o) => {
+    const d = (deps || []).find((x) => x.order_id === o.id);
+    const st = d?.status || 'awaiting_details';
+    return `<article class="card">
+      <div class="cat">${esc(o.plan_name)} · ${rm(o.amount_rm)} ${billingLabel(o.billing)}</div>
+      <h3>${esc(o.template_name || tname(o.template_id))}</h3>
+      <div><span class="chip ${st}">${esc(STATUS_TEXT[st] || st)}</span> <span class="chip ${o.status}">${esc(o.status)}</span></div>
+      ${d?.app_url ? `<p style="margin:0"><a class="btn btn-accent btn-sm" href="${esc(d.app_url)}" target="_blank" rel="noopener">Open my app ↗</a> ${d.admin_url ? `<a class="btn btn-ghost btn-sm" href="${esc(d.admin_url)}" target="_blank" rel="noopener">Admin login</a>` : ''}</p>` : ''}
+      ${d?.notes ? `<p class="small muted" style="margin:0"><b>Note from me:</b> ${esc(d.notes)}</p>` : ''}
+      ${d && ['awaiting_details', 'queued'].includes(st) ? `<button class="btn ${st === 'awaiting_details' ? 'btn-primary' : 'btn-ghost'} btn-sm" data-setup="${d.id}">${st === 'awaiting_details' ? 'Fill in setup details' : 'Edit setup details'}</button>` : ''}
+    </article>`;
+  }).join('') || `<div class="card"><h3>No apps yet</h3><p class="muted">Pick one from the catalogue and it will appear here after payment.</p><a class="btn btn-primary" href="index.html#apps" style="align-self:start">Browse apps</a></div>`;
+  $('#orders').innerHTML = (orders || []).map((o) => `<tr><td>${fmtDate(o.created_at)}</td><td>${esc(o.template_name)}</td><td>${esc(o.plan_name)}</td><td>${rm(o.amount_rm)} <span class="muted small">${billingLabel(o.billing)}</span></td><td><span class="chip ${o.status}">${o.status}</span></td><td>${o.billing === 'one_time' ? '—' : fmtDate(o.current_period_end)}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">No payments yet.</td></tr>';
+
+  // Setup modal
+  const sm = $('#setup-modal'), sf = $('#setup-form'); let current;
+  $('#apps').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-setup]'); if (!b) return;
+    current = (deps || []).find((x) => x.id === b.dataset.setup);
+    $('#setup-app').textContent = tname(current.template_id);
+    const s = current.setup || {}; [...sf.elements].forEach((el) => { if (el.name) el.value = s[el.name] ?? (el.type === 'color' ? '#16479e' : ''); });
+    if (!s.contact_email) sf.contact_email.value = user.email; if (!s.contact_phone) sf.contact_phone.value = prof?.phone || ''; if (!s.business_name) sf.business_name.value = prof?.company || '';
+    sm.classList.remove('hidden');
+  });
+  $('#setup-cancel').onclick = () => sm.classList.add('hidden');
+  sf.onsubmit = async (e) => {
+    e.preventDefault();
+    const setup = Object.fromEntries(new FormData(sf).entries());
+    const { error } = await sb.from('deployments').update({ setup, status: 'queued' }).eq('id', current.id);
+    if (error) return alert(error.message);
+    toast('Setup details sent — I\'ll be in touch'); location.reload();
+  };
+})();
+</script>
+</body>
+</html>

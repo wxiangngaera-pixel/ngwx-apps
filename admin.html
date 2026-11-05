@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin — Ng Wei Xiang</title>
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+</head>
+<body>
+<div id="nav"></div>
+<section>
+  <div class="wrap">
+    <div id="gate"></div>
+    <div id="admin" class="hidden">
+      <div class="section-head"><h2>Admin</h2><button class="btn btn-ghost btn-sm" id="refresh">Refresh</button></div>
+      <div class="kpis" id="kpis"></div>
+      <div class="tabs"><button data-t="deployments" class="on">Deployments</button><button data-t="orders">Payments</button><button data-t="templates">Apps</button><button data-t="plans">Plans</button><button data-t="customers">Customers</button></div>
+      <div id="panel"></div>
+    </div>
+  </div>
+</section>
+
+<div class="modal hidden" id="modal"><div class="box" id="modal-box"></div></div>
+<div id="footer"></div>
+<script src="app.js"></script>
+<script>
+(async () => {
+  const { sb, $, $$, esc, rm, billingLabel, fmtDate, toast, isOwner, mountChrome } = NG;
+  const user = await mountChrome();
+  if (!isOwner(user)) { $('#gate').innerHTML = `<div class="card auth-box"><h3>Owner only</h3><p class="muted">Sign in with your owner account to open the admin.</p><a class="btn btn-primary" href="account.html">Sign in</a></div>`; return; }
+  $('#admin').classList.remove('hidden');
+
+  let D = {};
+  async function load() {
+    const [t, p, o, d, c] = await Promise.all([
+      sb.from('templates').select('*').order('sort'), sb.from('plans').select('*').order('sort'),
+      sb.from('orders').select('*').order('created_at', { ascending: false }), sb.from('deployments').select('*').order('created_at', { ascending: false }),
+      sb.from('profiles').select('*').order('created_at', { ascending: false }),
+    ]);
+    D = { templates: t.data || [], plans: p.data || [], orders: o.data || [], deployments: d.data || [], customers: c.data || [] };
+    const paid = D.orders.filter((o) => ['paid', 'active', 'past_due'].includes(o.status));
+    const mrr = D.orders.filter((o) => o.status === 'active').reduce((s, o) => s + (o.billing === 'month' ? +o.amount_rm : o.billing === 'year' ? +o.amount_rm / 12 : 0), 0);
+    $('#kpis').innerHTML = [[D.deployments.filter((x) => x.status === 'queued').length, 'Waiting for you to deploy'], [D.deployments.filter((x) => x.status === 'live').length, 'Live apps'], [rm(mrr.toFixed(0)), 'Monthly recurring'], [rm(paid.reduce((s, o) => s + +o.amount_rm, 0)), 'Total paid'], [D.customers.length, 'Customers']].map(([v, l]) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`).join('');
+    render();
+  }
+  const tn = (id) => D.templates.find((t) => t.id === id)?.name || '—';
+  const cust = (uid) => D.customers.find((c) => c.id === uid);
+  let tab = 'deployments';
+  $$('.tabs button').forEach((b) => b.onclick = () => { $$('.tabs button').forEach((x) => x.classList.remove('on')); b.classList.add('on'); tab = b.dataset.t; render(); });
+  $('#refresh').onclick = load;
+
+  const modal = (html) => { $('#modal-box').innerHTML = html; $('#modal').classList.remove('hidden'); };
+  const close = () => $('#modal').classList.add('hidden');
+  $('#modal').onclick = (e) => { if (e.target.id === 'modal') close(); };
+  const field = (label, name, val = '', type = 'text', extra = '') => `<label>${label}${type === 'textarea' ? `<textarea name="${name}" ${extra}>${esc(val)}</textarea>` : type === 'select' ? `<select name="${name}">${extra}</select>` : `<input name="${name}" type="${type}" value="${esc(val)}" ${extra}>`}</label>`;
+  const opts = (arr, cur) => arr.map(([v, l]) => `<option value="${v}" ${v == cur ? 'selected' : ''}>${l}</option>`).join('');
+
+  function render() {
+    const P = $('#panel');
+    if (tab === 'deployments') {
+      P.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Customer</th><th>App</th><th>Status</th><th>Setup details</th><th>URL</th><th></th></tr></thead><tbody>${D.deployments.map((d) => { const c = cust(d.user_id); const s = d.setup || {}; return `<tr>
+        <td><b>${esc(c?.full_name || c?.email || '')}</b><br><span class="small muted">${esc(c?.email || '')}${c?.phone ? ' · ' + esc(c.phone) : ''}</span></td>
+        <td>${esc(tn(d.template_id))}<br><span class="small muted">${fmtDate(d.created_at)}</span></td>
+        <td><span class="chip ${d.status}">${d.status.replace('_', ' ')}</span></td>
+        <td class="small">${s.business_name ? `<b>${esc(s.business_name)}</b><br>${esc(s.domain || 'no domain')}<br>${s.logo_url ? `<a href="${esc(s.logo_url)}" target="_blank">logo</a> · ` : ''}${esc(s.colour || '')}<br>${esc(s.contact_phone || '')} ${esc(s.contact_email || '')}<br>${esc(s.address || '')}<br><i>${esc(s.notes || '')}</i>` : '<span class="muted">not submitted</span>'}</td>
+        <td class="small">${d.app_url ? `<a href="${esc(d.app_url)}" target="_blank">${esc(d.app_url)}</a>` : '—'}</td>
+        <td><button class="btn btn-ghost btn-sm" data-edit-dep="${d.id}">Update</button></td></tr>`; }).join('') || '<tr><td colspan="6" class="muted">No deployments yet.</td></tr>'}</tbody></table></div>`;
+    }
+    if (tab === 'orders') {
+      P.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Customer</th><th>App · Plan</th><th>Amount</th><th>Status</th><th>Renews</th><th>Stripe</th></tr></thead><tbody>${D.orders.map((o) => `<tr><td>${fmtDate(o.created_at)}</td><td>${esc(o.email)}</td><td>${esc(o.template_name)}<br><span class="small muted">${esc(o.plan_name)}</span></td><td>${rm(o.amount_rm)} <span class="small muted">${billingLabel(o.billing)}</span></td><td><span class="chip ${o.status}">${o.status}</span></td><td>${o.billing === 'one_time' ? '—' : fmtDate(o.current_period_end)}</td><td class="small">${o.stripe_subscription_id ? `<a href="https://dashboard.stripe.com/subscriptions/${o.stripe_subscription_id}" target="_blank">subscription</a>` : o.stripe_payment_intent ? `<a href="https://dashboard.stripe.com/payments/${o.stripe_payment_intent}" target="_blank">payment</a>` : '—'}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">No payments yet.</td></tr>'}</tbody></table></div>`;
+    }
+    if (tab === 'templates') {
+      P.innerHTML = `<p><button class="btn btn-primary btn-sm" data-edit-tpl="new">+ New app</button></p><div class="table-wrap"><table><thead><tr><th>Sort</th><th>App</th><th>Category</th><th>Badge</th><th>Plans</th><th>Active</th><th></th></tr></thead><tbody>${D.templates.map((t) => `<tr><td>${t.sort}</td><td><b>${esc(t.name)}</b><br><span class="small muted">/${esc(t.slug)} · ${esc(t.tagline || '')}</span></td><td>${esc(t.category || '')}</td><td>${esc(t.badge || '')}</td><td>${D.plans.filter((p) => p.template_id === t.id).length}</td><td>${t.active ? '✓' : '—'}</td><td class="actions"><button class="btn btn-ghost btn-sm" data-edit-tpl="${t.id}">Edit</button><button class="btn btn-ghost btn-sm" data-del-tpl="${t.id}">Delete</button></td></tr>`).join('')}</tbody></table></div>`;
+    }
+    if (tab === 'plans') {
+      P.innerHTML = `<p><button class="btn btn-primary btn-sm" data-edit-plan="new">+ New plan</button></p><div class="table-wrap"><table><thead><tr><th>App</th><th>Plan</th><th>Billing</th><th>Price</th><th>Best value</th><th>Active</th><th></th></tr></thead><tbody>${D.plans.map((p) => `<tr><td>${esc(tn(p.template_id))}</td><td><b>${esc(p.name)}</b><br><span class="small muted">${esc(p.description || '')}</span></td><td>${billingLabel(p.billing)}</td><td>${rm(p.price_rm)}</td><td>${p.highlight ? '★' : ''}</td><td>${p.active ? '✓' : '—'}</td><td class="actions"><button class="btn btn-ghost btn-sm" data-edit-plan="${p.id}">Edit</button><button class="btn btn-ghost btn-sm" data-del-plan="${p.id}">Delete</button></td></tr>`).join('')}</tbody></table></div>`;
+    }
+    if (tab === 'customers') {
+      P.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Joined</th><th>Name</th><th>Email</th><th>Company</th><th>Phone</th><th>Apps</th></tr></thead><tbody>${D.customers.map((c) => `<tr><td>${fmtDate(c.created_at)}</td><td>${esc(c.full_name || '')}</td><td>${esc(c.email)}</td><td>${esc(c.company || '')}</td><td>${esc(c.phone || '')}</td><td>${D.deployments.filter((d) => d.user_id === c.id).length}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">No customers yet.</td></tr>'}</tbody></table></div>`;
+    }
+  }
+
+  $('#panel').addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-edit-dep],button[data-edit-tpl],button[data-del-tpl],button[data-edit-plan],button[data-del-plan]'); if (!b) return;
+    if (b.dataset.editDep) {
+      const d = D.deployments.find((x) => x.id === b.dataset.editDep);
+      modal(`<h3>Update deployment — ${esc(tn(d.template_id))}</h3><form class="form" id="f">
+        ${field('Status', 'status', d.status, 'select', opts([['awaiting_details', 'Awaiting details'], ['queued', 'Queued'], ['deploying', 'Deploying'], ['live', 'Live'], ['suspended', 'Suspended']], d.status))}
+        ${field('App URL ( customer sees "Open my app" )', 'app_url', d.app_url || '', 'url')}
+        ${field('Admin / login URL', 'admin_url', d.admin_url || '', 'url')}
+        ${field('Note shown to the customer', 'notes', d.notes || '', 'textarea')}
+        <div class="actions"><button class="btn btn-primary">Save</button><button type="button" class="btn btn-ghost" onclick="document.getElementById('modal').classList.add('hidden')">Cancel</button></div></form>`);
+      $('#f').onsubmit = async (ev) => { ev.preventDefault(); const v = Object.fromEntries(new FormData(ev.target)); const { error } = await sb.from('deployments').update(v).eq('id', d.id); toast(error ? error.message : 'Deployment updated'); close(); load(); };
+    }
+    if (b.dataset.editTpl) {
+      const t = b.dataset.editTpl === 'new' ? { features: [], sort: 100, active: true } : D.templates.find((x) => x.id === b.dataset.editTpl);
+      modal(`<h3>${t.id ? 'Edit' : 'New'} app</h3><form class="form" id="f">
+        <div class="row2">${field('Name', 'name', t.name, 'text', 'required')}${field('Slug ( url )', 'slug', t.slug, 'text', 'required pattern="[a-z0-9-]+"')}</div>
+        ${field('Tagline', 'tagline', t.tagline)}
+        ${field('Description', 'description', t.description, 'textarea')}
+        <div class="row2">${field('Category', 'category', t.category)}${field('Badge ( e.g. New, Most popular, Coming soon )', 'badge', t.badge)}</div>
+        ${field('Features — one per line', 'features', (t.features || []).join('\n'), 'textarea')}
+        <div class="row2">${field('Image URL', 'image_url', t.image_url, 'url')}${field('Demo URL', 'demo_url', t.demo_url, 'url')}</div>
+        <div class="row2">${field('Sort order', 'sort', t.sort, 'number')}${field('Active', 'active', t.active, 'select', opts([['true', 'Yes — shown on site'], ['false', 'No — hidden']], String(t.active)))}</div>
+        <div class="actions"><button class="btn btn-primary">Save</button><button type="button" class="btn btn-ghost" onclick="document.getElementById('modal').classList.add('hidden')">Cancel</button></div></form>`);
+      $('#f').onsubmit = async (ev) => { ev.preventDefault(); const v = Object.fromEntries(new FormData(ev.target)); v.features = v.features.split('\n').map((s) => s.trim()).filter(Boolean); v.active = v.active === 'true'; v.sort = +v.sort; ['image_url', 'demo_url', 'badge', 'category', 'tagline', 'description'].forEach((k) => { if (!v[k]) v[k] = null; }); const q = t.id ? sb.from('templates').update(v).eq('id', t.id) : sb.from('templates').insert(v); const { error } = await q; toast(error ? error.message : 'Saved'); if (!error) { close(); load(); } };
+    }
+    if (b.dataset.delTpl) { if (!confirm('Delete this app and all its plans?')) return; const { error } = await sb.from('templates').delete().eq('id', b.dataset.delTpl); toast(error ? error.message : 'Deleted'); load(); }
+    if (b.dataset.editPlan) {
+      const p = b.dataset.editPlan === 'new' ? { features: [], sort: 100, active: true, billing: 'month', highlight: false } : D.plans.find((x) => x.id === b.dataset.editPlan);
+      modal(`<h3>${p.id ? 'Edit' : 'New'} plan</h3><form class="form" id="f">
+        ${field('App', 'template_id', p.template_id, 'select', opts(D.templates.map((t) => [t.id, t.name]), p.template_id))}
+        <div class="row2">${field('Plan name', 'name', p.name, 'text', 'required')}${field('Billing', 'billing', p.billing, 'select', opts([['month', 'Monthly subscription'], ['year', 'Yearly subscription'], ['one_time', 'One-time purchase']], p.billing))}</div>
+        <div class="row2">${field('Price ( RM )', 'price_rm', p.price_rm, 'number', 'step="0.01" required')}${field('Sort order', 'sort', p.sort, 'number')}</div>
+        ${field('Short description', 'description', p.description)}
+        ${field('Features — one per line', 'features', (p.features || []).join('\n'), 'textarea')}
+        <div class="row2">${field('Mark as best value', 'highlight', p.highlight, 'select', opts([['false', 'No'], ['true', 'Yes']], String(p.highlight)))}${field('Active', 'active', p.active, 'select', opts([['true', 'Yes'], ['false', 'No']], String(p.active)))}</div>
+        <div class="actions"><button class="btn btn-primary">Save</button><button type="button" class="btn btn-ghost" onclick="document.getElementById('modal').classList.add('hidden')">Cancel</button></div></form>`);
+      $('#f').onsubmit = async (ev) => { ev.preventDefault(); const v = Object.fromEntries(new FormData(ev.target)); v.features = v.features.split('\n').map((s) => s.trim()).filter(Boolean); v.active = v.active === 'true'; v.highlight = v.highlight === 'true'; v.sort = +v.sort; v.price_rm = +v.price_rm; const q = p.id ? sb.from('plans').update(v).eq('id', p.id) : sb.from('plans').insert(v); const { error } = await q; toast(error ? error.message : 'Saved'); if (!error) { close(); load(); } };
+    }
+    if (b.dataset.delPlan) { if (!confirm('Delete this plan?')) return; const { error } = await sb.from('plans').delete().eq('id', b.dataset.delPlan); toast(error ? error.message : 'Deleted'); load(); }
+  });
+  load();
+})();
+</script>
+</body>
+</html>
