@@ -30,7 +30,24 @@
 .pt input,.pt textarea{font:13px Inter,sans-serif;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text);width:100%}
 .pt input:focus,.pt textarea:focus{outline:2px solid #cfd8ff;border-color:var(--blue)}
 .rows{display:flex;flex-direction:column;gap:6px}
-.row{display:grid;grid-template-columns:22px 1.3fr .7fr 1.2fr 1.4fr 26px;gap:6px;align-items:center}
+.row{display:grid;grid-template-columns:22px 1.3fr .7fr 1.2fr 1.4fr 44px 22px;gap:6px;align-items:center}
+.clip{border:1px solid var(--line);background:#fff;border-radius:8px;height:32px;cursor:pointer;font-size:.78rem;color:var(--muted);padding:0 4px;white-space:nowrap}
+.clip:hover{border-color:#c5cad8}.clip.has{background:var(--ink);color:var(--accent);border-color:var(--ink);font-weight:600}
+.att-list{display:flex;flex-direction:column;gap:6px;margin:10px 0}
+.att{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--line);border-radius:10px}
+.att .th{width:44px;height:44px;border-radius:6px;background:#f1f3f8 center/cover no-repeat;display:grid;place-items:center;font-size:.7rem;font-weight:700;color:var(--muted);flex:none}
+.att .nm{flex:1;min-width:0;font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.att .nm small{display:block;color:var(--muted);font-size:.72rem}
+.kind{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:2px 7px;border-radius:99px;background:#eef1ff;color:var(--blue);border:0;cursor:pointer}
+.kind.receipt{background:#e9f8ef;color:var(--ok)}
+.modal .box.wide{max-width:560px}
+.att-groups{display:flex;flex-direction:column;gap:14px}
+.att-g h4{margin:0 0 6px;font-size:.85rem}
+.att-g .grid{display:flex;flex-wrap:wrap;gap:8px}
+.att-g a.tile{display:block;width:110px;text-decoration:none;color:var(--text);font-size:.7rem}
+.att-g a.tile .th{width:110px;height:80px;border-radius:8px;border:1px solid var(--line);background:#f1f3f8 center/cover no-repeat;display:grid;place-items:center;font-weight:700;color:var(--muted)}
+.att-g a.tile span{display:block;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#attPrint{display:none}
 .row.hd{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
 .row .n{color:var(--muted);font-size:.7rem;text-align:right;cursor:grab}
 .row input.amt{text-align:right}
@@ -61,6 +78,10 @@ table.pay tr.tot td:first-child{border-right:4px solid #000}
 @media print{
   body{background:#fff}
   .pt-bar,.pt-main>section:first-child,.side>section:not(#pvCard),#pvCard h2,#pvCard .hint,.toast{display:none!important}
+  #attPrint{display:block}
+  #attPrint .pg{page-break-before:always;text-align:center;font-family:Tinos,serif}
+  #attPrint .pg h4{margin:0 0 8px;font-size:14px}
+  #attPrint .pg img{max-width:100%;max-height:92vh;margin:0 auto}
   .pt-main{display:block;padding:0;width:auto}
   .card{border:0;padding:0}.pv-wrap{padding:0;overflow:visible}
   table.pay{min-width:0}
@@ -120,7 +141,13 @@ table.pay tr.tot td:first-child{border-right:4px solid #000}
         <button class="pt-btn sm" id="copyTxt">Copy as text</button>
       </h2>
       <div class="pv-wrap"><table class="pay" id="pv"></table></div>
+      <div id="attPrint"></div>
       <p class="hint">"Copy table" pastes with formatting into Numbers, Pages, Word or email. "Copy for Numbers" pastes plain cells. "Copy as text" is for WhatsApp.</p>
+    </section>
+    <section class="card">
+      <h2>Invoices &amp; receipts <span class="sp"></span><span id="attCount" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h2>
+      <div class="att-groups" id="attGroups"></div>
+      <p class="hint">Image files print after the table when you use Print / PDF.</p>
     </section>
     <section class="card">
       <h2>Saved drafts</h2>
@@ -129,6 +156,19 @@ table.pay tr.tot td:first-child{border-right:4px solid #000}
     </section>
   </div>
 </main>
+<div class="modal" id="attModal"><div class="box wide">
+  <h3 style="margin:0 0 2px">Invoices &amp; receipts</h3>
+  <div class="hint" id="attTitle" style="margin:0"></div>
+  <div class="att-list" id="attList"></div>
+  <p class="hint" id="attSignin" style="display:none">Sign in to attach files — they're kept privately in your account. <a href="../../account.html?next=payment-table">Sign in</a></p>
+  <div class="a" id="attActions" style="justify-content:flex-start;flex-wrap:wrap">
+    <button class="pt-btn pri" id="addInv">+ Invoice</button><button class="pt-btn pri" id="addRec">+ Receipt</button>
+    <span class="hint" id="attStatus" style="margin:auto 0"></span>
+  </div>
+  <p class="hint">Photos or PDF, up to 20 MB each. You can also drag files onto this box. Tap the Invoice / Receipt label to switch it.</p>
+  <div class="a"><button class="pt-btn" id="attClose">Done</button></div>
+</div></div>
+<input type="file" id="fileIn" accept="image/*,application/pdf" multiple hidden>
 <div class="modal" id="modal"><div class="box"><p id="mTxt"></p><div class="a"><button class="pt-btn" id="mNo">Cancel</button><button class="pt-btn pri" id="mYes">Confirm</button></div></div></div>
 
 <script>
@@ -217,12 +257,13 @@ $('#mNo').onclick=()=>$('#modal').classList.remove('on');
 
 /* ---------- render ---------- */
 function renderRows(){
-  $('#rows').innerHTML='<div class="row hd"><span></span><span>Pay to</span><span style="text-align:right">Amount (RM)</span><span>Recipient reference</span><span>Item</span><span></span></div>'+
+  $('#rows').innerHTML='<div class="row hd"><span></span><span>Pay to</span><span style="text-align:right">Amount (RM)</span><span>Recipient reference</span><span>Item</span><span>Files</span><span></span></div>'+
   D().rows.map((r,i)=>`<div class="row" draggable="true" data-i="${i}"><span class="n" title="Drag to reorder">${i+1}</span>
   <input data-k="pay" value="${esc(r.pay)}" list="dlPay">
   <input data-k="amt" class="amt" value="${esc(r.amt)}" inputmode="decimal">
   <input data-k="ref" value="${esc(r.ref)}" list="dlRef">
   <input data-k="item" value="${esc(r.item)}" list="dlItem">
+  <button class="clip ${(r.att||[]).length?'has':''}" data-att="${i}" title="Invoices &amp; receipts">📎${(r.att||[]).length||''}</button>
   <button class="x" data-del="${i}" title="Delete row">×</button></div>`).join('');
   const all=store.drafts.flatMap(d=>d.rows),u=k=>[...new Set(all.map(r=>(r[k]||'').trim()).filter(Boolean))].sort();
   $('#dlPay').innerHTML=u('pay').map(v=>`<option value="${esc(v)}">`).join('');
@@ -241,8 +282,75 @@ function renderPv(){
 function renderDrafts(){
   $('#drafts').innerHTML=store.drafts.map((d,i)=>`<div class="dr ${i===store.cur?'cur':''}" data-d="${i}"><span class="t">${esc(d.name||'Untitled')}</span><span class="m">RM ${fmtC(d.rows.reduce((a,r)=>a+num(r.amt),0))} · ${d.rows.length} rows</span><button class="x" data-dd="${i}" title="Delete draft">×</button></div>`).join('');
 }
+/* ---------- invoices & receipts ---------- */
+const BUCKET='payment-attachments',urlCache={};
+async function signed(path){const c=urlCache[path];if(c&&c.exp>Date.now())return c.url;
+  const {data,error}=await sb.storage.from(BUCKET).createSignedUrl(path,3600);if(error)return '';
+  urlCache[path]={url:data.signedUrl,exp:Date.now()+50*60*1000};return data.signedUrl}
+const isImg=a=>/^image\//.test(a.type||'');
+const kindLabel=k=>k==='receipt'?'Receipt':'Invoice';
+let attRow=null;
+function rowTitle(r,i){return (r.pay||'Row '+(i+1))+(r.amt?' · RM '+fmtC(num(r.amt)):'')}
+async function openAtt(i){
+  attRow=i;const r=D().rows[i];
+  $('#attTitle').textContent=rowTitle(r,i);
+  $('#attSignin').style.display=user?'none':'block';$('#attActions').style.display=user?'flex':'none';
+  $('#attModal').classList.add('on');await renderAttList();
+}
+async function renderAttList(){
+  const r=D().rows[attRow];const list=r.att||[];
+  $('#attList').innerHTML=list.length?list.map((a,j)=>`<div class="att"><div class="th" data-th="${j}">${isImg(a)?'':'PDF'}</div>
+    <div class="nm"><a href="#" data-open="${j}">${esc(a.name)}</a><small>${(a.size/1024).toFixed(0)} KB · ${fmtDay(a.at)}</small></div>
+    <button class="kind ${a.kind}" data-kind="${j}" title="Switch invoice / receipt">${kindLabel(a.kind)}</button>
+    <button class="x" data-rm="${j}" title="Remove file">×</button></div>`).join(''):'<p class="hint">No files yet.</p>';
+  for(const [j,a] of list.entries())if(isImg(a)){const u=await signed(a.path);const el=document.querySelector(`#attList [data-th="${j}"]`);if(el&&u)el.style.backgroundImage=`url("${u}")`}
+}
+function fmtDay(t){const d=new Date(t);return ordinal(d.getDate())+' '+d.toLocaleString('en-GB',{month:'short'})+' '+d.getFullYear()}
+async function upload(files,kind){
+  if(!user){toast('Sign in to attach files');return}
+  const r=D().rows[attRow];r.att=r.att||[];let n=0;
+  for(const f of files){
+    if(f.size>20*1024*1024){toast(f.name+' is over 20 MB');continue}
+    const safe=f.name.replace(/[^\w.\-]+/g,'_');
+    const path=`${user.id}/${D().id}/${Date.now()}-${Math.random().toString(36).slice(2,6)}-${safe}`;
+    $('#attStatus').textContent='Uploading '+f.name+'…';
+    const {error}=await sb.storage.from(BUCKET).upload(path,f,{contentType:f.type||'application/octet-stream'});
+    if(error){toast('Upload failed: '+error.message);continue}
+    r.att.push({path,name:f.name,type:f.type,size:f.size,kind,at:Date.now()});n++;
+  }
+  $('#attStatus').textContent='';save();renderRows();renderAttList();renderAttCard();if(n)toast(n+' file'+(n>1?'s':'')+' attached');
+}
+async function removeFiles(list){const p=(list||[]).map(a=>a.path);if(user&&p.length)await sb.storage.from(BUCKET).remove(p)}
+$('#addInv').onclick=()=>{$('#fileIn').dataset.kind='invoice';$('#fileIn').click()};
+$('#addRec').onclick=()=>{$('#fileIn').dataset.kind='receipt';$('#fileIn').click()};
+$('#fileIn').onchange=e=>{const fs=[...e.target.files];e.target.value='';if(fs.length)upload(fs,e.target.dataset.kind)};
+$('#attClose').onclick=()=>{$('#attModal').classList.remove('on');attRow=null};
+$('#attModal').addEventListener('dragover',e=>e.preventDefault());
+$('#attModal').addEventListener('drop',e=>{e.preventDefault();const fs=[...e.dataTransfer.files];if(fs.length)upload(fs,'invoice')});
+$('#attList').addEventListener('click',async e=>{
+  const r=D().rows[attRow],t=e.target;
+  if(t.dataset.open!==undefined){e.preventDefault();const u=await signed(r.att[+t.dataset.open].path);u?window.open(u,'_blank'):toast('Could not open file')}
+  if(t.dataset.kind!==undefined){const a=r.att[+t.dataset.kind];a.kind=a.kind==='receipt'?'invoice':'receipt';save();renderAttList();renderAttCard()}
+  if(t.dataset.rm!==undefined){const j=+t.dataset.rm;ask('Remove "'+r.att[j].name+'"?',async()=>{const [a]=r.att.splice(j,1);await removeFiles([a]);save();renderRows();renderAttList();renderAttCard()})}
+});
+async function renderAttCard(){
+  const rows=D().rows.map((r,i)=>({r,i})).filter(x=>(x.r.att||[]).length);
+  const total=rows.reduce((a,x)=>a+x.r.att.length,0);
+  $('#attCount').textContent=total?total+' file'+(total>1?'s':''):'';
+  if(!rows.length){$('#attGroups').innerHTML='<p class="hint">Click 📎 on a row to attach its invoice or receipt (photo or PDF).'+(user?'':' Sign in first — files are kept privately in your account.')+'</p>';$('#attPrint').innerHTML='';return}
+  $('#attGroups').innerHTML=rows.map(({r,i})=>`<div class="att-g"><h4>${i+1}. ${esc(rowTitle(r,i))}</h4><div class="grid">${r.att.map((a,j)=>`<a class="tile" href="#" data-o="${i}:${j}"><div class="th" data-t="${i}:${j}">${isImg(a)?'':'PDF'}</div><span>${kindLabel(a.kind)} · ${esc(a.name)}</span></a>`).join('')}</div></div>`).join('');
+  let pr='';
+  for(const {r,i} of rows)for(const [j,a] of r.att.entries()){
+    const u=user?await signed(a.path):'';
+    const el=document.querySelector(`#attGroups [data-t="${i}:${j}"]`);if(el&&u&&isImg(a))el.style.backgroundImage=`url("${u}")`;
+    if(u&&isImg(a))pr+=`<div class="pg"><h4>${i+1}. ${esc(rowTitle(r,i))} — ${kindLabel(a.kind)}</h4><img src="${u}"></div>`;
+  }
+  $('#attPrint').innerHTML=pr;
+}
+$('#attGroups').addEventListener('click',async e=>{const t=e.target.closest('[data-o]');if(!t)return;e.preventDefault();const [i,j]=t.dataset.o.split(':').map(Number);const u=await signed(D().rows[i].att[j].path);u?window.open(u,'_blank'):toast('Sign in to open files')});
+
 function renderMeta(){$('#dName').value=D().name||'';$('#dMonth').value=D().month||'';$('#cbRefPv').textContent=cbRef()}
-function all(){renderMeta();renderRows();renderPv();renderDrafts()}
+function all(){renderMeta();renderRows();renderPv();renderDrafts();renderAttCard()}
 
 /* ---------- editing ---------- */
 $('#rows').addEventListener('input',e=>{const k=e.target.dataset.k;if(!k)return;D().rows[+e.target.closest('.row').dataset.i][k]=e.target.value;save();renderPv();renderDrafts()});
@@ -253,7 +361,12 @@ $('#rows').addEventListener('change',e=>{
     if(p&&/CASH-BACK/.test(p.item)){r.ref=cbRef();r.item='CASH-BACK'}else if(p&&/LALAMOVE/.test(p.item)){r.item=p.item}renderRows()}
   save();renderPv();renderDrafts();
 });
-$('#rows').addEventListener('click',e=>{const d=e.target.dataset.del;if(d!==undefined){D().rows.splice(+d,1);save();renderRows();renderPv();renderDrafts()}});
+$('#rows').addEventListener('click',e=>{
+  const a=e.target.closest('[data-att]');if(a){openAtt(+a.dataset.att);return}
+  const d=e.target.dataset.del;if(d===undefined)return;
+  const go=()=>{const [r]=D().rows.splice(+d,1);removeFiles(r.att);save();renderRows();renderPv();renderDrafts();renderAttCard()};
+  (D().rows[+d].att||[]).length?ask('Delete this row and its attached files?',go):go();
+});
 $('#rows').addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.dataset.k){const i=+e.target.closest('.row').dataset.i;if(i===D().rows.length-1)addRow({});const nx=document.querySelector(`.row[data-i="${i+1}"] input[data-k="pay"]`);nx&&nx.focus()}});
 let dragI=null;
 $('#rows').addEventListener('dragstart',e=>{const r=e.target.closest('.row');if(!r||e.target.tagName==='INPUT')return;dragI=+r.dataset.i;r.classList.add('dragging')});
@@ -269,7 +382,7 @@ $('#addLala').onclick=()=>{const all=store.drafts.flatMap(d=>d.rows);
   const nums=all.map(r=>(r.ref||'').match(/^LALAMOVE\s+(\d+)/i)).filter(Boolean).map(m=>+m[1]);
   const lastPay=all.filter(r=>/LALAMOVE/.test(r.item)).pop();
   addRow({pay:lastPay?lastPay.pay:'',amt:'500.00',ref:'LALAMOVE '+(nums.length?Math.max(...nums)+1:1),item:'LALAMOVE TOP-UP'})};
-$('#clearRows').onclick=()=>ask('Clear all rows in this draft?',()=>{D().rows=[];save();all()});
+$('#clearRows').onclick=()=>ask('Clear all rows in this draft (and their attached files)?',()=>{removeFiles(D().rows.flatMap(r=>r.att||[]));D().rows=[];save();all()});
 $('#tglCb').onclick=()=>{$('#pCb').classList.toggle('on');$('#pPaste').classList.remove('on')};
 $('#tglPaste').onclick=()=>{$('#pPaste').classList.toggle('on');$('#pCb').classList.remove('on')};
 $('#cbAdd').onclick=()=>{let n=0;
@@ -284,12 +397,12 @@ $('#dName').oninput=e=>{D().name=e.target.value;save();renderDrafts()};
 $('#dMonth').oninput=e=>{D().month=e.target.value.toUpperCase();save();$('#cbRefPv').textContent=cbRef()};
 $('#dMonth').onchange=e=>{e.target.value=D().month};
 $('#newBtn').onclick=()=>{store.drafts.unshift({id:uid(),name:'Payments '+today(),month:prevMonth(),rows:[],updated:Date.now()});store.cur=0;save();all();toast('New draft')};
-$('#dupBtn').onclick=()=>{const c=JSON.parse(JSON.stringify(D()));c.id=uid();c.name=(c.name||'Draft')+' (copy)';store.drafts.unshift(c);store.cur=0;save();all();toast('Duplicated')};
+$('#dupBtn').onclick=()=>{const c=JSON.parse(JSON.stringify(D()));c.id=uid();c.name=(c.name||'Draft')+' (copy)';c.rows.forEach(r=>delete r.att);store.drafts.unshift(c);store.cur=0;save();all();toast('Duplicated')};
 $('#drafts').addEventListener('click',e=>{
   const dd=e.target.dataset.dd;
   if(dd!==undefined){e.stopPropagation();if(store.drafts.length===1){toast('Keep at least one draft');return}
     const d=store.drafts[+dd];
-    ask('Delete draft "'+(d.name||'Untitled')+'"?',()=>{store.drafts.splice(+dd,1);cloudDelete(d.id);if(store.cur>=store.drafts.length)store.cur=store.drafts.length-1;else if(+dd<store.cur)store.cur--;
+    ask('Delete draft "'+(d.name||'Untitled')+'"?',()=>{store.drafts.splice(+dd,1);cloudDelete(d.id);removeFiles(d.rows.flatMap(r=>r.att||[]));if(store.cur>=store.drafts.length)store.cur=store.drafts.length-1;else if(+dd<store.cur)store.cur--;
       try{localStorage.setItem(KEY,JSON.stringify(store))}catch(e){}all()});return}
   const d=e.target.closest('.dr');if(d){store.cur=+d.dataset.d;try{localStorage.setItem(KEY,JSON.stringify(store))}catch(e){}all()}
 });
