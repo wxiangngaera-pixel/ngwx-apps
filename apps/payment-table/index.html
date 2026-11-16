@@ -97,6 +97,7 @@ table.pay tr.tot td:first-child{border-right:4px solid #000}
   <span id="authBox" class="signin hide-s"></span>
   <button class="pt-btn" id="newBtn">+ New</button>
   <button class="pt-btn hide-s" id="dupBtn">Duplicate</button>
+  <button class="pt-btn pri" id="sendBtn">Send to accountant</button>
   <button class="pt-btn" id="printBtn">Print / PDF</button>
   <button class="pt-btn" id="pngBtn">Download image</button>
   <button class="pt-btn pri" id="copyRich">Copy table</button>
@@ -169,6 +170,12 @@ table.pay tr.tot td:first-child{border-right:4px solid #000}
   <div class="a"><button class="pt-btn" id="attClose">Done</button></div>
 </div></div>
 <input type="file" id="fileIn" accept="image/*,application/pdf" multiple hidden>
+<div class="modal" id="sendModal"><div class="box">
+  <h3 style="margin:0 0 6px">Send to accountant</h3>
+  <p class="hint" id="sendMsg" style="margin:0 0 12px">Preparing the file…</p>
+  <div style="height:6px;background:#eef0f5;border-radius:99px;overflow:hidden;margin-bottom:14px"><div id="sendBar" style="height:100%;width:0;background:var(--ink);transition:width .2s"></div></div>
+  <div class="a" id="sendActs"></div>
+</div></div>
 <div class="modal" id="modal"><div class="box"><p id="mTxt"></p><div class="a"><button class="pt-btn" id="mNo">Cancel</button><button class="pt-btn pri" id="mYes">Confirm</button></div></div></div>
 
 <script>
@@ -431,6 +438,105 @@ $('#pngBtn').onclick=async()=>{
   const c=await html2canvas($('#pv'),{scale:2,backgroundColor:'#fff'});
   const a=document.createElement('a');a.download=(D().name||'payments').replace(/[^\w\- ]+/g,'')+'.png';a.href=c.toDataURL('image/png');a.click();
 };
+
+/* ---------- send to accountant: one offline HTML file with every invoice & receipt inside ---------- */
+const blobToDataURL=b=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(b)});
+function loadScript(src){return new Promise((res,rej)=>{if(document.querySelector(`script[src="${src}"]`))return res();const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=rej;document.head.appendChild(s)})}
+async function imgPreview(blob,max=1600){
+  const url=URL.createObjectURL(blob);
+  try{const im=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=url});
+    const k=Math.min(1,max/Math.max(im.naturalWidth,im.naturalHeight));const c=document.createElement('canvas');
+    c.width=Math.round(im.naturalWidth*k);c.height=Math.round(im.naturalHeight*k);const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(im,0,0,c.width,c.height);
+    return [c.toDataURL('image/jpeg',.82)];
+  }catch(e){return []}finally{URL.revokeObjectURL(url)}
+}
+async function pdfPreview(blob){
+  try{
+    await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+    pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const pdf=await pdfjsLib.getDocument({data:await blob.arrayBuffer()}).promise;const out=[];
+    for(let p=1;p<=Math.min(pdf.numPages,10);p++){const pg=await pdf.getPage(p);const v0=pg.getViewport({scale:1});const vp=pg.getViewport({scale:Math.min(2,1500/v0.width)});
+      const c=document.createElement('canvas');c.width=vp.width;c.height=vp.height;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);
+      await pg.render({canvasContext:x,viewport:vp}).promise;out.push(c.toDataURL('image/jpeg',.8))}
+    return out;
+  }catch(e){return []}
+}
+function sendUI(msg,pct,acts){$('#sendMsg').textContent=msg;if(pct!=null)$('#sendBar').style.width=pct+'%';$('#sendActs').innerHTML=acts||''}
+async function buildPack(){
+  const d=D(),rows=rowsOut(),files=rows.flatMap(r=>r.att||[]);let done=0;
+  if(files.length&&!user)throw new Error('Sign in to include your invoices and receipts.');
+  const packed=[];
+  for(const r of rows){const list=[];
+    for(const a of (r.att||[])){
+      sendUI(`Adding ${a.name}… (${done+1} of ${files.length})`,files.length?Math.round(done/files.length*90):50);
+      const {data:blob,error}=await sb.storage.from(BUCKET).download(a.path);
+      if(error||!blob){list.push({...a,missing:true});done++;continue}
+      const pv=/pdf/i.test(a.type)||/\.pdf$/i.test(a.name)?await pdfPreview(blob):await imgPreview(blob);
+      const orig=blob.size<=8*1024*1024?await blobToDataURL(new Blob([blob],{type:a.type||'application/octet-stream'})):'';
+      list.push({...a,pv,orig});done++;
+    }
+    packed.push({r,list});
+  }
+  sendUI('Putting the file together…',95);
+  const T=s=>esc(s);
+  const head=`<tr><th>No.</th><th>Pay To</th><th>Amount ( RM )</th><th>Recipient Reference</th><th>Item</th><th>Files</th></tr>`;
+  const body=packed.map(({r,list},i)=>`<tr><td>${i+1}</td><td>${T(r.pay)}</td><td>${r.amt===''?'':fmt(num(r.amt))}</td><td>${T(r.ref)}</td><td>${T(r.item)}</td><td>${list.length?`<a href="#f${i+1}" class="fl">📎 ${list.length}</a>`:'—'}</td></tr>`).join('');
+  const sections=packed.map(({r,list},i)=>list.length?`<details id="f${i+1}"><summary><span class="no">${i+1}</span><span class="who">${T(r.pay)}<small>RM ${fmtC(num(r.amt))} · ${T(r.ref)}</small></span><span class="cnt">${list.length} file${list.length>1?'s':''}</span><span class="chev">▾</span></summary>
+    ${list.map(a=>`<div class="doc"><div class="dh"><span class="k ${a.kind}">${a.kind==='receipt'?'Receipt':'Invoice'}</span><span class="fn">${T(a.name)}</span>${a.orig?`<a class="sv" href="${a.orig}" download="${T(a.name)}">Save</a>`:''}</div>
+      ${a.missing?'<p class="ms">This file could not be added.</p>':(a.pv||[]).map(src=>`<img src="${src}" alt="${T(a.name)}">`).join('')||'<p class="ms">Preview not available — tap Save to open the file.</p>'}</div>`).join('')}</details>`:'').join('');
+  const now=new Date();
+  const html=`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${T(d.name||'Payment Form')}</title><style>
+*{box-sizing:border-box}body{margin:0;background:#f4f5f8;color:#111;font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+.w{max-width:1000px;margin:0 auto;padding:18px 14px 60px}
+h1{font-size:20px;margin:0 0 2px}.sub{color:#667;font-size:13px;margin-bottom:16px}
+.tw{overflow-x:auto;-webkit-overflow-scrolling:touch;background:#fff;border-radius:10px;padding:8px}
+table{border-collapse:collapse;width:100%;min-width:640px;font-family:"Times New Roman",Times,serif;border:3px solid #000}
+th{background:#c0c2c0;border:1.5px solid #000;border-bottom:3px solid #000;padding:8px;font-size:14px;text-transform:uppercase}
+td{border:1px solid #000;padding:7px 8px;text-align:center;font-size:13px;text-transform:uppercase}
+tr.tot td{border-top:3px solid #000;font-weight:700;font-size:18px;padding:10px}
+a.fl{text-decoration:none;font-family:-apple-system,Arial,sans-serif;font-weight:600;color:#3b5bff;white-space:nowrap}
+h2{font-size:16px;margin:26px 0 10px}
+details{background:#fff;border:1px solid #dde0e8;border-radius:12px;margin-bottom:10px;overflow:hidden}
+summary{list-style:none;display:flex;align-items:center;gap:10px;padding:14px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+summary::-webkit-details-marker{display:none}
+.no{width:28px;height:28px;border-radius:8px;background:#0b1020;color:#c8f04f;display:grid;place-items:center;font-weight:700;font-size:13px;flex:none}
+.who{flex:1;min-width:0;font-weight:600}.who small{display:block;font-weight:400;color:#667;font-size:12px}
+.cnt{font-size:12px;color:#667;white-space:nowrap}.chev{transition:transform .2s;color:#667}
+details[open] .chev{transform:rotate(180deg)}details[open] summary{border-bottom:1px solid #eee}
+.doc{padding:12px 14px;border-bottom:1px solid #f0f0f4}.doc:last-child{border-bottom:0}
+.dh{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.k{font-size:11px;font-weight:700;text-transform:uppercase;padding:3px 8px;border-radius:99px;background:#eef1ff;color:#3b5bff}.k.receipt{background:#e9f8ef;color:#16a34a}
+.fn{flex:1;min-width:0;font-size:13px;color:#445;overflow-wrap:anywhere}
+a.sv{background:#0b1020;color:#c8f04f;text-decoration:none;font-weight:600;font-size:13px;padding:7px 14px;border-radius:8px}
+.doc img{display:block;width:100%;height:auto;border:1px solid #e5e7ee;border-radius:6px;margin-bottom:8px;background:#fff}
+.ms{color:#a33;font-size:13px}
+.ft{color:#889;font-size:12px;margin-top:24px;text-align:center}
+@media print{body{background:#fff}details{break-inside:avoid}details:not([open]) summary{border:0}}
+</style></head><body><div class="w">
+<h1>${T(d.name||'Payment Form')}</h1><div class="sub">${packed.length} payments · RM ${fmtC(total())} · ${files.length} invoice${files.length===1?'':'s'} / receipt${files.length===1?'':'s'} · prepared ${fmtDay(now)}</div>
+<div class="tw"><table><thead>${head}</thead><tbody>${body}<tr class="tot"><td colspan="2">TOTAL</td><td colspan="4">${fmt(total())}</td></tr></tbody></table></div>
+${files.length?`<h2>Invoices &amp; receipts</h2><p class="sub" style="margin-top:-6px">Tap a payment to open its files. Tap <b>Save</b> to keep a file.</p>${sections}`:''}
+<div class="ft">${T(C.BRAND)} · Payment Form</div></div>
+<script>document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a.fl');if(!a)return;var d=document.querySelector(a.getAttribute('href'));if(d){d.open=true;}});</`+`script></body></html>`;
+  return new File([html],(d.name||'Payment Form').replace(/[\\/:*?"<>|]+/g,'-')+'.html',{type:'text/html'});
+}
+let lastPack=null;
+function downloadFile(f){const u=URL.createObjectURL(f);const a=document.createElement('a');a.href=u;a.download=f.name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),60000)}
+$('#sendBtn').onclick=async()=>{
+  $('#sendModal').classList.add('on');sendUI('Preparing the file…',3,'');
+  try{
+    lastPack=await buildPack();
+    const mb=(lastPack.size/1048576).toFixed(1);
+    const canShare=navigator.canShare&&navigator.canShare({files:[lastPack]});
+    sendUI(`Ready — "${lastPack.name}" (${mb} MB). Your accountant can open it on any phone or computer, even offline.`,100,
+      `<button class="pt-btn" id="sendClose">Close</button>${canShare?'<button class="pt-btn pri" id="sendShare">Share…</button>':''}<button class="pt-btn ${canShare?'':'pri'}" id="sendDl">Download</button>`);
+  }catch(e){sendUI(e.message||'Something went wrong.',0,'<button class="pt-btn" id="sendClose">Close</button>')}
+};
+$('#sendActs').addEventListener('click',async e=>{
+  if(e.target.id==='sendClose')$('#sendModal').classList.remove('on');
+  if(e.target.id==='sendDl'&&lastPack){downloadFile(lastPack);toast('Downloaded')}
+  if(e.target.id==='sendShare'&&lastPack){try{await navigator.share({files:[lastPack],title:lastPack.name})}catch(_){}}
+});
 
 /* ---------- start ---------- */
 all();
