@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Payment Form — Ng Wei Xiang</title>
+<title>Payment Form — AERA Meal Prep</title>
 <link rel="stylesheet" href="../../styles.css?v=3">
 <link href="https://fonts.googleapis.com/css2?family=Tinos:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -64,7 +64,7 @@ table.pay th{background:#6d8ef0;color:#fff;font-weight:700;font-size:14px;letter
 table.pay td{font-size:14px;padding:8px 10px;border:1px solid #d3daf0;text-align:center;text-transform:uppercase}
 table.pay tbody tr:nth-child(even) td{background:#f6f8ff}
 table.pay tr.tot td{border-top:2px solid #1f2847;background:#eef3fd;font-weight:700;font-size:20px;padding:12px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-table.pay tr.tot td:last-child{color:#5b5fe0}
+table.pay tr.tot td:last-child{color:#000}
 table.pay tr.tot td:first-child{border-right:1px solid #d3daf0}
 .stats{display:flex;gap:16px;margin-top:10px;color:var(--muted);font-size:.78rem;flex-wrap:wrap}.stats b{color:var(--text)}
 .drafts{display:flex;flex-direction:column;gap:6px;max-height:300px;overflow:auto}
@@ -89,11 +89,40 @@ table.pay tr.tot td:first-child{border-right:1px solid #d3daf0}
   table.pay{min-width:0}
   table.pay th{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
+
+/* ===== AERA Meal Prep theme ===== */
+body.pt{--ink:#16479E;--blue:#16479E;--accent:#FDB913;--grad:#FDB913;--line:#c9d5ec}
+.pt-bar{background:#16479E;border-bottom:3px solid #FDB913}
+.pt-bar h1{color:#fff}.pt-bar .who{color:#c9d5ec}
+.pt-bar .brand .mark{width:auto;height:34px;padding:0;border:0;background:none}
+.pt-bar .brand .mark img{height:34px;width:auto;display:block}
+.pt-btn{background:#16479E;color:#FDB913;border:1px solid #16479E;font-weight:600}
+.pt-btn:hover{filter:brightness(1.12);border-color:#16479E}
+.pt-btn.pri{background:#FDB913;color:#000;border-color:#FDB913}
+.pt-btn.dng{background:#16479E;color:#FDB913}
+.pt-bar .pt-btn{border-color:#FDB913}
+.clip{background:#16479E;color:#FDB913;border-color:#16479E}
+.clip.has{background:#FDB913;color:#000;border-color:#FDB913}
+.card{border-color:#16479E}
+.card h2{color:#16479E}
+.pt input,.pt textarea{border-color:#c9d5ec}
+.pt input:focus,.pt textarea:focus{outline:2px solid #FDB913;border-color:#16479E}
+.dr{border-color:#c9d5ec}.dr.cur{border-color:#16479E;background:#fff8e1}
+.kind{background:#16479E;color:#FDB913}.kind.receipt{background:#FDB913;color:#000}
+.toast{background:#16479E;color:#FDB913}
+table.pay{border:2px solid #16479E;color:#000}
+table.pay th{background:#16479E;color:#FDB913;border:1px solid #16479E;border-bottom:2px solid #16479E}
+table.pay td{border:1px solid #16479E}
+table.pay tbody tr:nth-child(even) td{background:#f3f6fc}
+table.pay tr.tot td{background:#FDB913;color:#000;border-top:2px solid #16479E}
+table.pay tr.tot td:last-child{color:#000}
+table.pay tr.tot td:first-child{border-right:1px solid #16479E}
+#sendBar{background:#FDB913!important}
 </style>
 </head>
 <body class="pt">
 <div class="pt-bar"><div class="wrap">
-  <a class="brand" href="../../index.html" title="Back to all apps"><span class="mark">NG</span></a>
+  <a class="brand" href="../../index.html" title="Back to all apps"><span class="mark"><img src="../../assets/aera-logo.svg" alt="AERA Meal Prep"></span></a>
   <div><h1>Payment Form</h1><div class="who" id="who">Drafts saved on this device</div></div>
   <div class="sp"></div>
   <span id="authBox" class="signin hide-s"></span>
@@ -480,7 +509,7 @@ async function buildPack(){
     packed.push({r,list});
   }
   sendUI('Putting the file together…',95);
-  const logo=await fetch('../../assets/logo.png').then(r=>r.blob()).then(blobToDataURL).catch(()=>'');
+  const logo=await fetch('../../assets/aera-logo.svg').then(r=>r.blob()).then(blobToDataURL).catch(()=>'');
   const T=s=>esc(s);
   const head=`<tr><th>No.</th><th>Pay To</th><th>Amount ( RM )</th><th>Recipient Reference</th><th>Item</th><th>Files</th></tr>`;
   const body=packed.map(({r,list},i)=>`<tr><td>${i+1}</td><td>${T(r.pay)}</td><td>${r.amt===''?'':fmt(num(r.amt))}</td><td>${T(r.ref)}</td><td>${T(r.item)}</td><td>${list.length?`<a href="#f${i+1}" class="fl">📎 ${list.length}</a>`:'—'}</td></tr>`).join('');
@@ -491,40 +520,39 @@ async function buildPack(){
   const html=`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${T(d.name||'Payment Form')}</title><style>
 *{box-sizing:border-box}body{margin:0;background:#f4f5f8;color:#111;font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
 .w{max-width:1000px;margin:0 auto;padding:18px 14px 60px}
-body{border-top:5px solid #6aa2ec;border-image:linear-gradient(90deg,#67adeb,#7b6ff0) 1}
-.bh{display:flex;align-items:center;gap:10px;margin-bottom:14px}.bh img{width:40px;height:40px;border-radius:10px;background:#fff;border:1px solid #e3e6ef;padding:3px}.bh b{display:block;font-size:15px}.bh small{color:#7b6ff0;font-weight:600;font-size:12px}
-h1{color:#0b1020}
+.bh{display:flex;align-items:center;justify-content:space-between;gap:10px;background:#16479E;border-bottom:4px solid #FDB913;border-radius:12px;padding:12px 16px;margin-bottom:16px}.bh img{height:38px;width:auto;display:block}.bh b{color:#fff;font-size:17px}.bh span{color:#FDB913;font-weight:700;font-size:13px;letter-spacing:.06em;text-transform:uppercase}
+h1{color:#16479E}h2{color:#16479E}
 h1{font-size:20px;margin:0 0 2px}.sub{color:#667;font-size:13px;margin-bottom:16px}
 .tw{overflow-x:auto;-webkit-overflow-scrolling:touch;background:#fff;border-radius:10px;padding:8px}
-table{border-collapse:collapse;width:100%;min-width:640px;font-family:"Times New Roman",Times,serif;border:2px solid #1f2847}
-th{background:#6d8ef0;color:#fff;border:1px solid #5a78e0;border-bottom:2px solid #1f2847;padding:9px 8px;font-size:13px;letter-spacing:.03em;text-transform:uppercase;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-td{border:1px solid #d3daf0;padding:7px 8px;text-align:center;font-size:13px;text-transform:uppercase;color:#0b1020}
-tbody tr:nth-child(even) td{background:#f6f8ff}
-tr.tot td{border-top:2px solid #1f2847;background:#eef3fd!important;font-weight:700;font-size:18px;padding:10px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-tr.tot td:last-child{color:#5b5fe0}
-a.fl{text-decoration:none;font-family:-apple-system,Arial,sans-serif;font-weight:600;color:#5b7cfa;white-space:nowrap}
+table{border-collapse:collapse;width:100%;min-width:640px;font-family:"Times New Roman",Times,serif;border:2px solid #16479E}
+th{background:#16479E;color:#FDB913;border:1px solid #16479E;border-bottom:2px solid #16479E;padding:9px 8px;font-size:13px;letter-spacing:.03em;text-transform:uppercase;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+td{border:1px solid #16479E;padding:7px 8px;text-align:center;font-size:13px;text-transform:uppercase;color:#000}
+tbody tr:nth-child(even) td{background:#f3f6fc}
+tr.tot td{border-top:2px solid #16479E;background:#FDB913!important;color:#000;font-weight:700;font-size:18px;padding:10px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+tr.tot td:last-child{color:#000}
+a.fl{text-decoration:none;font-family:-apple-system,Arial,sans-serif;font-weight:700;color:#16479E;white-space:nowrap}
 h2{font-size:16px;margin:26px 0 10px}
-details{background:#fff;border:1px solid #dde0e8;border-radius:12px;margin-bottom:10px;overflow:hidden}
+details{background:#fff;border:1.5px solid #16479E;border-radius:12px;margin-bottom:10px;overflow:hidden}
 summary{list-style:none;display:flex;align-items:center;gap:10px;padding:14px;cursor:pointer;-webkit-tap-highlight-color:transparent}
 summary::-webkit-details-marker{display:none}
-.no{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#67adeb,#7b6ff0);color:#fff;display:grid;place-items:center;font-weight:700;font-size:13px;flex:none}
-.who{flex:1;min-width:0;font-weight:600}.who small{display:block;font-weight:400;color:#667;font-size:12px}
-.cnt{font-size:12px;color:#667;white-space:nowrap}.chev{transition:transform .2s;color:#667}
+.no{width:28px;height:28px;border-radius:8px;background:#16479E;color:#FDB913;display:grid;place-items:center;font-weight:700;font-size:13px;flex:none}
+.who{flex:1;min-width:0;font-weight:600;color:#16479E}.who small{display:block;font-weight:400;color:#667;font-size:12px}
+.cnt{font-size:12px;color:#667;white-space:nowrap}.chev{transition:transform .2s;color:#16479E}
 details[open] .chev{transform:rotate(180deg)}details[open] summary{border-bottom:1px solid #eee}
 .doc{padding:12px 14px;border-bottom:1px solid #f0f0f4}.doc:last-child{border-bottom:0}
 .dh{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
-.k{font-size:11px;font-weight:700;text-transform:uppercase;padding:3px 8px;border-radius:99px;background:#eef1ff;color:#5b7cfa}.k.receipt{background:#e9f8ef;color:#16a34a}
+.k{font-size:11px;font-weight:700;text-transform:uppercase;padding:3px 8px;border-radius:99px;background:#16479E;color:#FDB913}.k.receipt{background:#FDB913;color:#000}
 .fn{flex:1;min-width:0;font-size:13px;color:#445;overflow-wrap:anywhere}
-a.sv{background:linear-gradient(135deg,#67adeb,#7b6ff0);color:#fff;text-decoration:none;font-weight:600;font-size:13px;padding:7px 14px;border-radius:8px}
+a.sv{background:#16479E;color:#FDB913;text-decoration:none;font-weight:600;font-size:13px;padding:7px 14px;border-radius:8px}
 .doc img{display:block;width:100%;height:auto;border:1px solid #e5e7ee;border-radius:6px;margin-bottom:8px;background:#fff}
 .ms{color:#a33;font-size:13px}
 .ft{color:#889;font-size:12px;margin-top:24px;text-align:center}
 @media print{body{background:#fff}details{break-inside:avoid}details:not([open]) summary{border:0}}
 </style></head><body><div class="w">
-<div class="bh">${logo?`<img src="${logo}" alt="">`:''}<div><b>${T(C.BRAND)}</b><small>Payment Form</small></div></div><h1>${T(d.name||'Payment Form')}</h1><div class="sub">${packed.length} payments · RM ${fmtC(total())} · ${files.length} invoice${files.length===1?'':'s'} / receipt${files.length===1?'':'s'} · prepared ${fmtDay(now)}</div>
+<div class="bh">${logo?`<img src="${logo}" alt="AERA Meal Prep">`:'<b>AERA Meal Prep</b>'}<span>Payment Form</span></div><h1>${T(d.name||'Payment Form')}</h1><div class="sub">${packed.length} Payment${packed.length===1?'':'s'} · RM${fmtC(total())} · ${files.length} Invoice${files.length===1?'':'s'} / Receipt${files.length===1?'':'s'} · Prepared ${fmtDay(now)}</div>
 <div class="tw"><table><thead>${head}</thead><tbody>${body}<tr class="tot"><td colspan="2">TOTAL</td><td colspan="4">${fmt(total())}</td></tr></tbody></table></div>
-${files.length?`<h2>Invoices &amp; receipts</h2><p class="sub" style="margin-top:-6px">Tap a payment to open its files. Tap <b>Save</b> to keep a file.</p>${sections}`:''}
-<div class="ft">${T(C.BRAND)} · Payment Form</div></div>
+${files.length?`<h2>Invoices &amp; Receipts</h2><p class="sub" style="margin-top:-6px">Tap a Payment to open its files. Tap <b>Save</b> to keep a file.</p>${sections}`:''}
+<div class="ft">AERA Meal Prep · Payment Form</div></div>
 <script>document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a.fl');if(!a)return;var d=document.querySelector(a.getAttribute('href'));if(d){d.open=true;}});</`+`script></body></html>`;
   return new File([html],'Payment-Form_'+(d.name||'Payments').trim().replace(/[^A-Za-z0-9]+/g,'-').replace(/^-|-$/g,'')+'.html',{type:'text/html'});
 }
