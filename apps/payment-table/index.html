@@ -554,7 +554,8 @@ a.sv{background:#16479E;color:#FDB913;text-decoration:none;font-weight:600;font-
 ${files.length?`<h2>Invoices &amp; Receipts</h2><p class="sub" style="margin-top:-6px">Tap a Payment to open its files. Tap <b>Save</b> to keep a file.</p>${sections}`:''}
 <div class="ft">AERA Meal Prep · Payment Form</div></div>
 <script>document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a.fl');if(!a)return;var d=document.querySelector(a.getAttribute('href'));if(d){d.open=true;}});</`+`script></body></html>`;
-  return new File([html],'Payment-Form_'+(d.name||'Payments').trim().replace(/[^A-Za-z0-9]+/g,'-').replace(/^-|-$/g,'')+'.html',{type:'text/html'});
+  const dm=(d.name||'').match(/\d{1,2}(st|nd|rd|th)\s+[A-Za-z]{3}\s+\d{4}/);
+  return new File([html],'Payment Form '+(dm?dm[0]:fmtDay(now))+'.html',{type:'text/html'});
 }
 let lastPack=null;
 function downloadFile(f){const u=URL.createObjectURL(f);const a=document.createElement('a');a.href=u;a.download=f.name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),60000)}
