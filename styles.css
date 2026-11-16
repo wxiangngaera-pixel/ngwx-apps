@@ -60,7 +60,7 @@ img { max-width: 100%; display: block; }
 .btn-block { width: 100%; }
 
 /* Hero */
-.hero { padding: 5rem 0 3.5rem; background: radial-gradient(900px 400px at 10% -10%, rgba(200,240,79,0.35), transparent 60%), radial-gradient(700px 400px at 100% 0%, rgba(59,91,255,0.12), transparent 60%); }
+.hero { padding: 5rem 0 3.5rem; background: radial-gradient(900px 400px at 10% -10%, rgba(106,162,236,0.28), transparent 60%), radial-gradient(700px 400px at 100% 0%, rgba(123,111,240,0.16), transparent 60%); }
 .hero .eyebrow { display: inline-flex; align-items: center; gap: 0.5rem; background: #fff; border: 1px solid var(--line); border-radius: 999px; padding: 0.35rem 0.8rem; font-size: 0.8rem; font-weight: 600; color: var(--muted); margin-bottom: 1.2rem; }
 .hero .eyebrow i { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: inline-block; }
 .hero p.lead { font-size: 1.15rem; color: var(--muted); max-width: 56ch; }
