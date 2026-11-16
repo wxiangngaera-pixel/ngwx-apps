@@ -518,7 +518,7 @@ a.sv{background:#0b1020;color:#c8f04f;text-decoration:none;font-weight:600;font-
 ${files.length?`<h2>Invoices &amp; receipts</h2><p class="sub" style="margin-top:-6px">Tap a payment to open its files. Tap <b>Save</b> to keep a file.</p>${sections}`:''}
 <div class="ft">${T(C.BRAND)} · Payment Form</div></div>
 <script>document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a.fl');if(!a)return;var d=document.querySelector(a.getAttribute('href'));if(d){d.open=true;}});</`+`script></body></html>`;
-  return new File([html],(d.name||'Payment Form').replace(/[\\/:*?"<>|]+/g,'-')+'.html',{type:'text/html'});
+  return new File([html],'Payment-Form_'+(d.name||'Payments').trim().replace(/[^A-Za-z0-9]+/g,'-').replace(/^-|-$/g,'')+'.html',{type:'text/html'});
 }
 let lastPack=null;
 function downloadFile(f){const u=URL.createObjectURL(f);const a=document.createElement('a');a.href=u;a.download=f.name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),60000)}
