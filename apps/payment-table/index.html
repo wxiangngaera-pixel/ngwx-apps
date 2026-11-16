@@ -513,7 +513,7 @@ async function buildPack(){
   const T=s=>esc(s);
   const head=`<tr><th>No.</th><th>Pay To</th><th>Amount ( RM )</th><th>Recipient Reference</th><th>Item</th><th>Files</th></tr>`;
   const body=packed.map(({r,list},i)=>`<tr><td>${i+1}</td><td>${T(r.pay)}</td><td>${r.amt===''?'':fmt(num(r.amt))}</td><td>${T(r.ref)}</td><td>${T(r.item)}</td><td>${list.length?`<a href="#f${i+1}" class="fl">📎 ${list.length}</a>`:'—'}</td></tr>`).join('');
-  const sections=packed.map(({r,list},i)=>list.length?`<details id="f${i+1}"><summary><span class="no">${i+1}</span><span class="who">${T(r.pay)}<small>RM ${fmtC(num(r.amt))} · ${T(r.ref)}</small></span><span class="cnt">${list.length} file${list.length>1?'s':''}</span><span class="chev">▾</span></summary>
+  const sections=packed.map(({r,list},i)=>list.length?`<details id="f${i+1}"><summary><span class="no">${i+1}</span><span class="who">${T(r.pay)}<small>RM${fmtC(num(r.amt))} · ${T(r.ref)}</small></span><span class="cnt">${list.length} File${list.length>1?'s':''}</span><span class="chev">▾</span></summary>
     ${list.map(a=>`<div class="doc"><div class="dh"><span class="k ${a.kind}">${a.kind==='receipt'?'Receipt':'Invoice'}</span><span class="fn">${T(a.name)}</span>${a.orig?`<a class="sv" href="${a.orig}" download="${T(a.name)}">Save</a>`:''}</div>
       ${a.missing?'<p class="ms">This file could not be added.</p>':(a.pv||[]).map(src=>`<img src="${src}" alt="${T(a.name)}">`).join('')||'<p class="ms">Preview not available — tap Save to open the file.</p>'}</div>`).join('')}</details>`:'').join('');
   const now=new Date();
