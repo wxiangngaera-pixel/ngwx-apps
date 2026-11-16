@@ -36,7 +36,7 @@
   <div class="wrap">
     <div class="section-head">
       <div><h2>My apps</h2><p class="muted" id="hello"></p></div>
-      <div class="actions"><a class="btn btn-ghost btn-sm" href="apps/payment-table/">Payment Table Drafter</a><button class="btn btn-ghost btn-sm" id="portal">Manage billing</button><button class="btn btn-ghost btn-sm" id="signout">Sign out</button></div>
+      <div class="actions"><a class="btn btn-ghost btn-sm" href="apps/payment-table/">Payment Form</a><button class="btn btn-ghost btn-sm" id="portal">Manage billing</button><button class="btn btn-ghost btn-sm" id="signout">Sign out</button></div>
     </div>
     <div id="notice"></div>
     <div class="grid" id="apps"><p class="muted">Loading…</p></div>
@@ -81,7 +81,7 @@
   $('#toggle-mode').onclick = (e) => { e.preventDefault(); setMode(mode === 'in' ? 'up' : 'in'); };
   const msg = (t, k = 'err') => $('#auth-msg').innerHTML = t ? `<div class="msg ${k}">${esc(t)}</div>` : '';
   if (q.get('next') === 'buy') { setMode('up'); msg('Create an account ( or sign in ) to continue to checkout.', 'info'); }
-  if (q.get('next') === 'payment-table') { msg('Sign in to save your payment table drafts to your account.', 'info'); const { data: { user: u0 } } = await sb.auth.getUser(); if (u0) { location.replace('apps/payment-table/'); return; } }
+  if (q.get('next') === 'payment-table') { msg('Sign in to save your payment form drafts to your account.', 'info'); const { data: { user: u0 } } = await sb.auth.getUser(); if (u0) { location.replace('apps/payment-table/'); return; } }
 
   $('#auth-form').onsubmit = async (e) => {
     e.preventDefault(); msg('');
