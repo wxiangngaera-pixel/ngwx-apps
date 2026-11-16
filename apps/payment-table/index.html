@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Payment Table Drafter — Ng Wei Xiang</title>
+<link rel="stylesheet" href="../../styles.css">
+<link href="https://fonts.googleapis.com/css2?family=Tinos:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="../../config.js"></script>
+<style>
+.pt-bar{position:sticky;top:0;z-index:40;background:rgba(246,247,251,.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.pt-bar .wrap{display:flex;align-items:center;gap:.6rem;height:64px;width:min(1500px,96vw)}
+.pt-bar h1{font-size:1.05rem;margin:0;line-height:1.2}
+.pt-bar .sp{flex:1}
+.pt-btn{border:1px solid var(--line);background:#fff;color:var(--text);padding:.5rem .8rem;border-radius:10px;font:500 .85rem Inter,sans-serif;cursor:pointer;white-space:nowrap;text-decoration:none}
+.pt-btn:hover{border-color:#c5cad8}
+.pt-btn.pri{background:var(--ink);color:var(--accent);border-color:var(--ink)}
+.pt-btn.dng{color:var(--bad)}
+.pt-btn.sm{padding:.3rem .6rem;font-size:.78rem}
+.who{font-size:.8rem;color:var(--muted)}
+.pt-main{display:grid;grid-template-columns:minmax(540px,1fr) minmax(480px,1.1fr);gap:20px;padding:20px 0;width:min(1500px,96vw);margin:0 auto}
+@media(max-width:1100px){.pt-main{grid-template-columns:1fr}.pt-bar .hide-s{display:none}}
+.card{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:16px}
+.card h2{font:600 .78rem Inter,sans-serif;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.card h2 .sp{flex:1}
+.meta{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.meta label{font-size:.78rem;color:var(--muted);display:flex;flex-direction:column;gap:4px;flex:1;min-width:160px}
+.pt input,.pt textarea{font:13px Inter,sans-serif;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text);width:100%}
+.pt input:focus,.pt textarea:focus{outline:2px solid #cfd8ff;border-color:var(--blue)}
+.rows{display:flex;flex-direction:column;gap:6px}
+.row{display:grid;grid-template-columns:22px 1.3fr .7fr 1.2fr 1.4fr 26px;gap:6px;align-items:center}
+.row.hd{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.row .n{color:var(--muted);font-size:.7rem;text-align:right;cursor:grab}
+.row input.amt{text-align:right}
+.row.dragging{opacity:.4}.row.over{box-shadow:0 -2px 0 var(--blue)}
+.x{border:0;background:none;color:#b3b7c3;cursor:pointer;font-size:17px;padding:0}.x:hover{color:var(--bad)}
+.addbar{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.panel{margin-top:14px;border-top:1px dashed var(--line);padding-top:12px;display:none}.panel.on{display:block}
+.panel h3{font-size:.95rem;margin:0 0 6px}
+.pt textarea{min-height:120px;font-family:ui-monospace,Menlo,monospace}
+.hint{font-size:.78rem;color:var(--muted);margin:6px 0}
+.pv-wrap{overflow:auto;background:#fff;padding:14px}
+table.pay{border-collapse:collapse;font-family:Tinos,"Times New Roman",Times,serif;color:#000;min-width:640px;width:100%;border:4px solid #000;background:#fff}
+table.pay th{background:#c0c2c0;font-weight:700;font-size:16px;padding:9px 10px;border:2px solid #000;border-bottom:4px solid #000;text-transform:uppercase}
+table.pay td{font-size:14px;padding:8px 10px;border:1px solid #000;border-left:2px solid #000;border-right:2px solid #000;text-align:center;text-transform:uppercase}
+table.pay tr.tot td{border-top:4px solid #000;font-weight:700;font-size:20px;padding:12px}
+table.pay tr.tot td:first-child{border-right:4px solid #000}
+.stats{display:flex;gap:16px;margin-top:10px;color:var(--muted);font-size:.78rem;flex-wrap:wrap}.stats b{color:var(--text)}
+.drafts{display:flex;flex-direction:column;gap:6px;max-height:300px;overflow:auto}
+.dr{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;cursor:pointer}
+.dr:hover{border-color:#c5cad8}.dr.cur{border-color:var(--ink);background:#f3f6e6}
+.dr .t{flex:1;font-weight:500;font-size:.88rem}.dr .m{color:var(--muted);font-size:.75rem}
+.side{display:flex;flex-direction:column;gap:20px}
+.modal{position:fixed;inset:0;background:rgba(11,16,32,.45);display:none;align-items:center;justify-content:center;z-index:60}.modal.on{display:flex}
+.modal .box{background:#fff;border-radius:14px;padding:20px;max-width:380px;width:90%}.modal .box p{margin:0 0 16px}
+.modal .a{display:flex;gap:8px;justify-content:flex-end}
+.signin{display:flex;gap:6px;align-items:center}
+.signin input{width:200px}
+@media print{
+  body{background:#fff}
+  .pt-bar,.pt-main>section:first-child,.side>section:not(#pvCard),#pvCard h2,#pvCard .hint,.toast{display:none!important}
+  .pt-main{display:block;padding:0;width:auto}
+  .card{border:0;padding:0}.pv-wrap{padding:0;overflow:visible}
+  table.pay{min-width:0}
+  table.pay th{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style>
+</head>
+<body class="pt">
+<div class="pt-bar"><div class="wrap">
+  <a class="brand" href="../../index.html" title="Back to all apps"><span class="mark">NG</span></a>
+  <div><h1>Payment Table Drafter</h1><div class="who" id="who">Drafts saved on this device</div></div>
+  <div class="sp"></div>
+  <span id="authBox" class="signin hide-s"></span>
+  <button class="pt-btn" id="newBtn">+ New</button>
+  <button class="pt-btn hide-s" id="dupBtn">Duplicate</button>
+  <button class="pt-btn" id="printBtn">Print / PDF</button>
+  <button class="pt-btn" id="pngBtn">Download image</button>
+  <button class="pt-btn pri" id="copyRich">Copy table</button>
+</div></div>
+
+<main class="pt-main">
+  <section class="card">
+    <h2>Draft <span class="sp"></span><span id="saved" style="text-transform:none;letter-spacing:0;font-weight:400"></span></h2>
+    <div class="meta">
+      <label>Draft name<input id="dName" placeholder="e.g. Payments 16th Nov 2026"></label>
+      <label>Cash-back month<input id="dMonth" placeholder="OCTOBER 2026"></label>
+    </div>
+    <div class="rows" id="rows"></div>
+    <datalist id="dlPay"></datalist><datalist id="dlItem"></datalist><datalist id="dlRef"></datalist>
+    <div class="addbar">
+      <button class="pt-btn" id="addRow">+ Add row</button>
+      <button class="pt-btn" id="addCb">+ Cash-back row</button>
+      <button class="pt-btn" id="addLala">+ Lalamove top-up</button>
+      <button class="pt-btn" id="tglCb">Cash-back batch…</button>
+      <button class="pt-btn" id="tglPaste">Paste rows…</button>
+      <span style="flex:1"></span>
+      <button class="pt-btn dng" id="clearRows">Clear rows</button>
+    </div>
+    <div class="panel" id="pCb">
+      <h3>Cash-back batch</h3>
+      <p class="hint">One payee per line, name then amount (e.g. <code>RIOT FITNESS 46.42</code>). Reference becomes "<span id="cbRefPv"></span>" and Item "CASH-BACK".</p>
+      <textarea id="cbText" placeholder="RIOT FITNESS 46.42&#10;EDMUND HENG 18.76"></textarea>
+      <div class="addbar"><button class="pt-btn pri" id="cbAdd">Add to table</button></div>
+    </div>
+    <div class="panel" id="pPaste">
+      <h3>Paste rows</h3>
+      <p class="hint">Paste from Numbers / Excel (4 columns: Pay To, Amount, Reference, Item). Header and TOTAL rows are skipped.</p>
+      <textarea id="pasteText"></textarea>
+      <div class="addbar"><button class="pt-btn pri" id="pasteAdd">Add to table</button></div>
+    </div>
+    <div class="stats" id="stats"></div>
+  </section>
+  <div class="side">
+    <section class="card" id="pvCard">
+      <h2>Preview <span class="sp"></span>
+        <button class="pt-btn sm" id="copyTsv">Copy for Numbers</button>
+        <button class="pt-btn sm" id="copyTxt">Copy as text</button>
+      </h2>
+      <div class="pv-wrap"><table class="pay" id="pv"></table></div>
+      <p class="hint">"Copy table" pastes with formatting into Numbers, Pages, Word or email. "Copy for Numbers" pastes plain cells. "Copy as text" is for WhatsApp.</p>
+    </section>
+    <section class="card">
+      <h2>Saved drafts</h2>
+      <div class="drafts" id="drafts"></div>
+      <p class="hint" id="storeHint">Sign in to keep drafts in your account and open them on any device.</p>
+    </section>
+  </div>
+</main>
+<div class="modal" id="modal"><div class="box"><p id="mTxt"></p><div class="a"><button class="pt-btn" id="mNo">Cancel</button><button class="pt-btn pri" id="mYes">Confirm</button></div></div></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const C=window.NGWX;
+const sb=window.supabase.createClient(C.SUPABASE_URL,C.SUPABASE_ANON_KEY);
+const KEY='ngwx-paytable-v1';
+let user=null;
+
+const SAMPLE={name:'Sample payments',month:'OCTOBER 2026',rows:[
+['ABC TRADING SDN BHD','382.80','INV-10234','TRUFFLE OIL x 1 CARTON'],
+['ABC TRADING SDN BHD','212.71','INV-10241','SMOKED CHICKEN BREAST x 4.9 KG'],
+['RIDER TOP-UP ACCOUNT','500.00','LALAMOVE 1','LALAMOVE TOP-UP'],
+['SAMPLE FITNESS','46.42','OCTOBER 2026 CASH-BACK','CASH-BACK'],
+['JOHN TAN','18.76','OCTOBER 2026 CASH-BACK','CASH-BACK'],
+['FRESH FROZEN SUPPLY','959.90','INV-77810','NEW ZEALAND BEEF TENDERLOIN x 9.795 KG']
+].map(r=>({pay:r[0],amt:r[1],ref:r[2],item:r[3]}))};
+
+function uid(){return (crypto.randomUUID?crypto.randomUUID():'xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx'.replace(/x/g,()=>(Math.random()*16|0).toString(16)))}
+let store;try{store=JSON.parse(localStorage.getItem(KEY))}catch(e){}
+if(!store||!store.drafts||!store.drafts.length)store={cur:0,drafts:[{id:uid(),updated:Date.now(),...JSON.parse(JSON.stringify(SAMPLE))}]};
+store.drafts.forEach(d=>{if(!/^[0-9a-f-]{36}$/.test(d.id))d.id=uid()});
+function D(){return store.drafts[store.cur]}
+
+/* ---------- saving: local always, cloud when signed in ---------- */
+let dirty=new Set(),syncT=null;
+function save(){
+  D().updated=Date.now();dirty.add(D().id);
+  try{localStorage.setItem(KEY,JSON.stringify(store))}catch(e){}
+  $('#saved').textContent=user?'Saving…':'Saved on this device';
+  clearTimeout(syncT);syncT=setTimeout(sync,700);
+}
+async function sync(){
+  if(!user){$('#saved').textContent='Saved on this device';return}
+  const ids=[...dirty];dirty.clear();
+  const rows=store.drafts.filter(d=>ids.includes(d.id)).map(d=>({id:d.id,user_id:user.id,name:d.name||'',month:d.month||'',rows:d.rows,updated_at:new Date(d.updated).toISOString()}));
+  if(!rows.length)return;
+  const {error}=await sb.from('payment_drafts').upsert(rows);
+  $('#saved').textContent=error?'Not synced — '+error.message:'Saved to your account';
+  if(error)ids.forEach(i=>dirty.add(i));
+}
+async function cloudDelete(id){if(user)await sb.from('payment_drafts').delete().eq('id',id)}
+async function loadCloud(){
+  const {data,error}=await sb.from('payment_drafts').select('*').order('updated_at',{ascending:false});
+  if(error){$('#saved').textContent='Could not load account drafts';return}
+  const cloud=(data||[]).map(r=>({id:r.id,name:r.name,month:r.month,rows:r.rows||[],updated:Date.parse(r.updated_at)}));
+  const byId=new Map(cloud.map(d=>[d.id,d]));
+  // push local drafts that aren't in the account yet (skip the untouched sample)
+  store.drafts.forEach(d=>{const c=byId.get(d.id);
+    if(!c){if(d.name!==SAMPLE.name){byId.set(d.id,d);dirty.add(d.id)}}
+    else if(d.updated>c.updated){byId.set(d.id,d);dirty.add(d.id)}});
+  let list=[...byId.values()].sort((a,b)=>b.updated-a.updated);
+  if(!list.length){const d={id:uid(),name:'Payments '+today(),month:prevMonth(),rows:[],updated:Date.now()};list=[d];dirty.add(d.id)}
+  const curId=D()&&D().id;store.drafts=list;store.cur=Math.max(0,list.findIndex(d=>d.id===curId));
+  try{localStorage.setItem(KEY,JSON.stringify(store))}catch(e){}
+  all();sync();
+}
+
+/* ---------- auth ---------- */
+function renderAuth(){
+  if(user){
+    $('#who').textContent='Signed in as '+user.email+' · drafts saved to your account';
+    $('#authBox').innerHTML='<button class="pt-btn sm" id="outBtn">Sign out</button>';
+    $('#storeHint').textContent='Drafts are saved to your account — open them on any device.';
+  }else{
+    $('#who').textContent='Drafts saved on this device';
+    $('#authBox').innerHTML='<a class="pt-btn sm" href="../../account.html?next=payment-table">Sign in to sync</a>';
+    $('#storeHint').textContent='Sign in to keep drafts in your account and open them on any device.';
+  }
+}
+$('#authBox').addEventListener('click',async e=>{if(e.target.id==='outBtn'){await sb.auth.signOut();user=null;renderAuth();toast('Signed out — drafts stay on this device')}});
+
+/* ---------- helpers ---------- */
+function num(v){const n=parseFloat(String(v).replace(/[^0-9.\-]/g,''));return isNaN(n)?0:n}
+const fmt=n=>n.toFixed(2);
+const fmtC=n=>n.toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function ordinal(d){const s=['th','st','nd','rd'],v=d%100;return d+(s[(v-20)%10]||s[v]||s[0])}
+function today(){const d=new Date();return ordinal(d.getDate())+' '+d.toLocaleString('en-GB',{month:'short'})+' '+d.getFullYear()}
+function prevMonth(){const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-1);return d.toLocaleString('en-GB',{month:'long'}).toUpperCase()+' '+d.getFullYear()}
+function cbRef(){return (D().month||prevMonth()).toUpperCase().trim()+' CASH-BACK'}
+function total(){return D().rows.reduce((a,r)=>a+num(r.amt),0)}
+function toast(m){const t=document.createElement('div');t.className='toast';t.textContent=m;document.body.appendChild(t);setTimeout(()=>t.remove(),2200)}
+function ask(t,fn){$('#mTxt').textContent=t;$('#modal').classList.add('on');$('#mYes').onclick=()=>{$('#modal').classList.remove('on');fn()}}
+$('#mNo').onclick=()=>$('#modal').classList.remove('on');
+
+/* ---------- render ---------- */
+function renderRows(){
+  $('#rows').innerHTML='<div class="row hd"><span></span><span>Pay to</span><span style="text-align:right">Amount (RM)</span><span>Recipient reference</span><span>Item</span><span></span></div>'+
+  D().rows.map((r,i)=>`<div class="row" draggable="true" data-i="${i}"><span class="n" title="Drag to reorder">${i+1}</span>
+  <input data-k="pay" value="${esc(r.pay)}" list="dlPay">
+  <input data-k="amt" class="amt" value="${esc(r.amt)}" inputmode="decimal">
+  <input data-k="ref" value="${esc(r.ref)}" list="dlRef">
+  <input data-k="item" value="${esc(r.item)}" list="dlItem">
+  <button class="x" data-del="${i}" title="Delete row">×</button></div>`).join('');
+  const all=store.drafts.flatMap(d=>d.rows),u=k=>[...new Set(all.map(r=>(r[k]||'').trim()).filter(Boolean))].sort();
+  $('#dlPay').innerHTML=u('pay').map(v=>`<option value="${esc(v)}">`).join('');
+  $('#dlItem').innerHTML=u('item').map(v=>`<option value="${esc(v)}">`).join('');
+  $('#dlRef').innerHTML=u('ref').map(v=>`<option value="${esc(v)}">`).join('');
+}
+function rowsOut(){return D().rows.filter(r=>r.pay||r.amt||r.ref||r.item)}
+function renderPv(){
+  const rows=rowsOut();
+  $('#pv').innerHTML='<thead><tr><th>Pay To</th><th>Amount ( RM )</th><th>Recipient Reference</th><th>Item</th></tr></thead><tbody>'+
+  rows.map(r=>`<tr><td>${esc(r.pay)}</td><td>${r.amt===''?'':fmt(num(r.amt))}</td><td>${esc(r.ref)}</td><td>${esc(r.item)}</td></tr>`).join('')+
+  `<tr class="tot"><td>TOTAL</td><td colspan="3">${fmt(total())}</td></tr></tbody>`;
+  const cb=rows.filter(r=>/CASH-BACK/i.test(r.item)),pays=new Set(rows.map(r=>r.pay.trim().toUpperCase()));
+  $('#stats').innerHTML=`<span>Rows <b>${rows.length}</b></span><span>Payees <b>${pays.size}</b></span><span>Cash-back <b>RM ${fmtC(cb.reduce((a,r)=>a+num(r.amt),0))}</b> (${cb.length})</span><span>Total <b>RM ${fmtC(total())}</b></span>`;
+}
+function renderDrafts(){
+  $('#drafts').innerHTML=store.drafts.map((d,i)=>`<div class="dr ${i===store.cur?'cur':''}" data-d="${i}"><span class="t">${esc(d.name||'Untitled')}</span><span class="m">RM ${fmtC(d.rows.reduce((a,r)=>a+num(r.amt),0))} · ${d.rows.length} rows</span><button class="x" data-dd="${i}" title="Delete draft">×</button></div>`).join('');
+}
+function renderMeta(){$('#dName').value=D().name||'';$('#dMonth').value=D().month||'';$('#cbRefPv').textContent=cbRef()}
+function all(){renderMeta();renderRows();renderPv();renderDrafts()}
+
+/* ---------- editing ---------- */
+$('#rows').addEventListener('input',e=>{const k=e.target.dataset.k;if(!k)return;D().rows[+e.target.closest('.row').dataset.i][k]=e.target.value;save();renderPv();renderDrafts()});
+$('#rows').addEventListener('change',e=>{
+  const k=e.target.dataset.k;if(!k)return;const r=D().rows[+e.target.closest('.row').dataset.i];
+  if(k==='amt'){if(r.amt!==''){r.amt=fmt(num(r.amt));e.target.value=r.amt}}else{r[k]=r[k].toUpperCase();e.target.value=r[k]}
+  if(k==='pay'&&r.pay&&!r.item&&!r.ref){const p=store.drafts.flatMap(d=>d.rows).filter(x=>x!==r&&x.pay.toUpperCase()===r.pay).pop();
+    if(p&&/CASH-BACK/.test(p.item)){r.ref=cbRef();r.item='CASH-BACK'}else if(p&&/LALAMOVE/.test(p.item)){r.item=p.item}renderRows()}
+  save();renderPv();renderDrafts();
+});
+$('#rows').addEventListener('click',e=>{const d=e.target.dataset.del;if(d!==undefined){D().rows.splice(+d,1);save();renderRows();renderPv();renderDrafts()}});
+$('#rows').addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.dataset.k){const i=+e.target.closest('.row').dataset.i;if(i===D().rows.length-1)addRow({});const nx=document.querySelector(`.row[data-i="${i+1}"] input[data-k="pay"]`);nx&&nx.focus()}});
+let dragI=null;
+$('#rows').addEventListener('dragstart',e=>{const r=e.target.closest('.row');if(!r||e.target.tagName==='INPUT')return;dragI=+r.dataset.i;r.classList.add('dragging')});
+$('#rows').addEventListener('dragover',e=>{e.preventDefault();document.querySelectorAll('.row.over').forEach(x=>x.classList.remove('over'));const r=e.target.closest('.row[data-i]');r&&r.classList.add('over')});
+$('#rows').addEventListener('drop',e=>{e.preventDefault();const r=e.target.closest('.row[data-i]');if(r&&dragI!==null){const [m]=D().rows.splice(dragI,1);D().rows.splice(+r.dataset.i,0,m);save();renderRows();renderPv()}dragI=null});
+$('#rows').addEventListener('dragend',()=>{dragI=null;document.querySelectorAll('.row').forEach(x=>x.classList.remove('dragging','over'))});
+
+function addRow(r){D().rows.push({pay:'',amt:'',ref:'',item:'',...r});save();renderRows();renderPv();renderDrafts();
+  const last=document.querySelector(`.row[data-i="${D().rows.length-1}"] input[data-k="pay"]`);last&&last.focus()}
+$('#addRow').onclick=()=>addRow({});
+$('#addCb').onclick=()=>addRow({ref:cbRef(),item:'CASH-BACK'});
+$('#addLala').onclick=()=>{const all=store.drafts.flatMap(d=>d.rows);
+  const nums=all.map(r=>(r.ref||'').match(/^LALAMOVE\s+(\d+)/i)).filter(Boolean).map(m=>+m[1]);
+  const lastPay=all.filter(r=>/LALAMOVE/.test(r.item)).pop();
+  addRow({pay:lastPay?lastPay.pay:'',amt:'500.00',ref:'LALAMOVE '+(nums.length?Math.max(...nums)+1:1),item:'LALAMOVE TOP-UP'})};
+$('#clearRows').onclick=()=>ask('Clear all rows in this draft?',()=>{D().rows=[];save();all()});
+$('#tglCb').onclick=()=>{$('#pCb').classList.toggle('on');$('#pPaste').classList.remove('on')};
+$('#tglPaste').onclick=()=>{$('#pPaste').classList.toggle('on');$('#pCb').classList.remove('on')};
+$('#cbAdd').onclick=()=>{let n=0;
+  $('#cbText').value.split('\n').map(s=>s.trim()).filter(Boolean).forEach(l=>{const m=l.match(/^(.*?)[\s,\t]+(?:RM\s*)?([\d,]+(?:\.\d+)?)\s*$/i);
+    if(m){D().rows.push({pay:m[1].replace(/[,\t]+$/,'').trim().toUpperCase(),amt:fmt(num(m[2])),ref:cbRef(),item:'CASH-BACK'});n++}});
+  $('#cbText').value='';save();all();toast(n+' cash-back rows added')};
+$('#pasteAdd').onclick=()=>{let n=0;
+  $('#pasteText').value.split('\n').forEach(l=>{const c=l.split('\t').map(s=>s.trim());if(c.length<2||!c[0]||/^(PAY TO|TOTAL)$/i.test(c[0]))return;
+    D().rows.push({pay:c[0].toUpperCase(),amt:c[1]?fmt(num(c[1])):'',ref:(c[2]||'').toUpperCase(),item:(c[3]||'').toUpperCase()});n++});
+  $('#pasteText').value='';save();all();toast(n+' rows added')};
+$('#dName').oninput=e=>{D().name=e.target.value;save();renderDrafts()};
+$('#dMonth').oninput=e=>{D().month=e.target.value.toUpperCase();save();$('#cbRefPv').textContent=cbRef()};
+$('#dMonth').onchange=e=>{e.target.value=D().month};
+$('#newBtn').onclick=()=>{store.drafts.unshift({id:uid(),name:'Payments '+today(),month:prevMonth(),rows:[],updated:Date.now()});store.cur=0;save();all();toast('New draft')};
+$('#dupBtn').onclick=()=>{const c=JSON.parse(JSON.stringify(D()));c.id=uid();c.name=(c.name||'Draft')+' (copy)';store.drafts.unshift(c);store.cur=0;save();all();toast('Duplicated')};
+$('#drafts').addEventListener('click',e=>{
+  const dd=e.target.dataset.dd;
+  if(dd!==undefined){e.stopPropagation();if(store.drafts.length===1){toast('Keep at least one draft');return}
+    const d=store.drafts[+dd];
+    ask('Delete draft "'+(d.name||'Untitled')+'"?',()=>{store.drafts.splice(+dd,1);cloudDelete(d.id);if(store.cur>=store.drafts.length)store.cur=store.drafts.length-1;else if(+dd<store.cur)store.cur--;
+      try{localStorage.setItem(KEY,JSON.stringify(store))}catch(e){}all()});return}
+  const d=e.target.closest('.dr');if(d){store.cur=+d.dataset.d;try{localStorage.setItem(KEY,JSON.stringify(store))}catch(e){}all()}
+});
+
+/* ---------- output ---------- */
+async function copyText(t,html){
+  try{
+    if(html&&window.ClipboardItem)await navigator.clipboard.write([new ClipboardItem({'text/html':new Blob([html],{type:'text/html'}),'text/plain':new Blob([t],{type:'text/plain'})})]);
+    else await navigator.clipboard.writeText(t);
+    toast('Copied');
+  }catch(e){const r=document.createRange();r.selectNode($('#pv'));const s=getSelection();s.removeAllRanges();s.addRange(r);
+    try{document.execCommand('copy');toast('Copied')}catch(_){toast('Press ⌘C to copy the selected table')}}
+}
+function tsv(){return 'PAY TO\tAMOUNT ( RM )\tRECIPIENT REFERENCE\tITEM\n'+rowsOut().map(r=>[r.pay,r.amt===''?'':fmt(num(r.amt)),r.ref,r.item].join('\t')).join('\n')+'\nTOTAL\t'+fmt(total())+'\t\t'}
+function richHtml(){
+  const b='border:1px solid #000;',f='font-family:Times New Roman,Times,serif;text-align:center;padding:6px 10px;';
+  return `<table style="border-collapse:collapse;border:3px solid #000"><tr>${['PAY TO','AMOUNT ( RM )','RECIPIENT REFERENCE','ITEM'].map(h=>`<th style="${b}border-bottom:3px solid #000;${f}background:#c0c2c0;font-weight:bold">${h}</th>`).join('')}</tr>`+
+  rowsOut().map(r=>`<tr>${[r.pay,r.amt===''?'':fmt(num(r.amt)),r.ref,r.item].map(c=>`<td style="${b}${f}">${esc(c)}</td>`).join('')}</tr>`).join('')+
+  `<tr><td style="${b}border-top:3px solid #000;${f}font-weight:bold;font-size:18px">TOTAL</td><td colspan="3" style="${b}border-top:3px solid #000;${f}font-weight:bold;font-size:18px">${fmt(total())}</td></tr></table>`}
+$('#copyRich').onclick=()=>copyText(tsv(),richHtml());
+$('#copyTsv').onclick=()=>copyText(tsv());
+$('#copyTxt').onclick=()=>copyText(`*${D().name||'Payments'}*\n\n`+rowsOut().map((r,i)=>`${i+1}. ${r.pay} — RM ${fmtC(num(r.amt))}\n    Ref: ${r.ref}${r.item?` · ${r.item}`:''}`).join('\n')+`\n\n*TOTAL: RM ${fmtC(total())}*`);
+$('#printBtn').onclick=()=>window.print();
+$('#pngBtn').onclick=async()=>{
+  if(!window.html2canvas){toast('Image tool not loaded — try again');return}
+  const c=await html2canvas($('#pv'),{scale:2,backgroundColor:'#fff'});
+  const a=document.createElement('a');a.download=(D().name||'payments').replace(/[^\w\- ]+/g,'')+'.png';a.href=c.toDataURL('image/png');a.click();
+};
+
+/* ---------- start ---------- */
+all();
+(async()=>{
+  const {data:{user:u}}=await sb.auth.getUser();user=u;renderAuth();
+  if(user)loadCloud();
+  sb.auth.onAuthStateChange((_e,s)=>{const nu=s&&s.user;if(nu&&(!user||nu.id!==user.id)){user=nu;renderAuth();loadCloud()}});
+})();
+</script>
+</body>
+</html>
