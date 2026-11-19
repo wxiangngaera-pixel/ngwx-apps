@@ -224,9 +224,22 @@ if ('speechSynthesis' in window) {
   speechSynthesis.getVoices();
   speechSynthesis.onvoiceschanged = () => {};
 }
+// iPhones only allow speech that starts from a tap: "unlock" the voice on the first tap.
+let voiceUnlocked = false;
+function unlockVoice() {
+  if (voiceUnlocked || !('speechSynthesis' in window)) return;
+  const u = new SpeechSynthesisUtterance(' ');
+  u.volume = 0;
+  speechSynthesis.speak(u);
+  voiceUnlocked = true;
+}
+document.addEventListener('touchend', unlockVoice, { once: true });
+document.addEventListener('click', unlockVoice, { once: true });
+
 function speak(text) {
   if (!('speechSynthesis' in window)) { setState(null, 'Tap the mic to talk'); return; }
   speechSynthesis.cancel();
+  speechSynthesis.resume();
   const u = new SpeechSynthesisUtterance(text);
   const rl = replyLang(text);
   voice = pickVoice(rl);
@@ -276,7 +289,8 @@ if (SR) {
   rec.onend = () => { if (listening) finishListening(); };
 }
 $('mic').addEventListener('click', () => {
-  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  unlockVoice();
+  if ('speechSynthesis' in window && speechSynthesis.speaking) speechSynthesis.cancel();
   if (!rec) { setState(null, 'Voice not supported here — type instead'); $('typed').focus(); return; }
   if (listening) {
     // Tapped again: send whatever was heard, even if the phone hasn't finished.
@@ -290,6 +304,7 @@ $('mic').addEventListener('click', () => {
 });
 $('typeForm').addEventListener('submit', (e) => {
   e.preventDefault();
+  unlockVoice();
   const t = $('typed').value.trim();
   $('typed').value = '';
   ask(t);
