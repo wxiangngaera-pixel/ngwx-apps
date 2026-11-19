@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#070B14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Nova">
+<title>Nova</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#070B14;--card:#0F1626;--line:#1B2740;--text:#E6EDF7;--muted:#8A97AD;--purple:#8A2BE2;--purple-text:#B57BFF;--ring1:#2A1250;--ring2:#4B1C86;--orange:#F37021}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif;-webkit-tap-highlight-color:transparent}
+  .app{max-width:480px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;gap:18px;padding:calc(env(safe-area-inset-top) + 28px) 20px calc(env(safe-area-inset-bottom) + 24px)}
+  .top{display:flex;justify-content:space-between;align-items:center}
+  .brand{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:22px;letter-spacing:6px;color:var(--purple-text)}
+  .link{background:none;border:0;color:var(--muted);font:inherit;font-size:13px;min-height:44px;cursor:pointer}
+  h1{font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:600;margin:0}
+  .sub{font-size:14px;color:var(--muted);margin-top:4px}
+  .orb-wrap{display:flex;flex-direction:column;align-items:center;gap:12px;padding:6px 0}
+  .r1{width:172px;height:172px;border-radius:50%;border:1px solid var(--ring1);display:flex;align-items:center;justify-content:center}
+  .r2{width:134px;height:134px;border-radius:50%;border:1px solid var(--ring2);display:flex;align-items:center;justify-content:center}
+  .orb{width:96px;height:96px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#E2C6FF 0%,#8A2BE2 38%,#3D0A78 100%);box-shadow:0 0 48px rgba(138,43,226,.6);transition:transform .3s}
+  .listening .orb{animation:pulse 1s ease-in-out infinite}
+  .thinking .orb{animation:spin 1.4s linear infinite;background:conic-gradient(from 0deg,#3D0A78,#8A2BE2,#E2C6FF,#8A2BE2,#3D0A78)}
+  .speaking .orb{animation:pulse .5s ease-in-out infinite}
+  .listening .r2,.speaking .r2{border-color:var(--orange)}
+  @keyframes pulse{50%{transform:scale(1.12)}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .status{font-size:12px;letter-spacing:1.5px;color:var(--purple-text);text-transform:uppercase;min-height:16px}
+  .log{flex:1;display:flex;flex-direction:column;gap:12px;overflow-y:auto;min-height:120px}
+  .msg{max-width:86%;padding:12px 14px;font-size:15px;line-height:1.45;white-space:pre-wrap}
+  .me{align-self:flex-end;background:var(--line);border-radius:18px 18px 4px 18px}
+  .nova{align-self:flex-start;background:var(--card);border:1px solid var(--line);border-radius:18px 18px 18px 4px}
+  .err{align-self:center;color:var(--orange);font-size:13px;text-align:center}
+  .bar{display:flex;gap:10px;align-items:center}
+  .bar input{flex:1;min-height:48px;border-radius:14px;border:1px solid var(--line);background:var(--card);color:var(--text);padding:0 14px;font:inherit;font-size:15px}
+  .send{min-width:48px;min-height:48px;border-radius:14px;border:1px solid var(--ring2);background:none;color:var(--purple-text);font:inherit;font-weight:600;cursor:pointer}
+  .mic{width:72px;height:72px;border-radius:50%;border:0;background:var(--purple);display:flex;align-items:center;justify-content:center;box-shadow:0 0 28px rgba(138,43,226,.55);cursor:pointer;flex:none}
+  .listening .mic{background:var(--orange);box-shadow:0 0 28px rgba(243,112,33,.55)}
+  .center{display:flex;justify-content:center}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;display:flex;flex-direction:column;gap:12px}
+  label{font-size:13px;color:var(--muted)}
+  .field{min-height:48px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--text);padding:0 14px;font:inherit;font-size:15px;width:100%}
+  .btn{min-height:52px;border-radius:14px;border:0;background:var(--purple);color:#fff;font:inherit;font-weight:600;font-size:15px;cursor:pointer}
+  .btn.ghost{background:none;border:1px solid var(--line);color:var(--text)}
+  .note{font-size:13px;color:var(--muted);line-height:1.5}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="top">
+    <div class="brand">NOVA</div>
+    <button class="link" id="signout" hidden>Sign out</button>
+  </div>
+
+  <!-- Sign in -->
+  <section id="login" hidden>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:18px">
+      <h1>Sign in</h1>
+      <div class="sub">Only your account can use Nova.</div>
+    </div>
+    <form class="card" id="loginForm">
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <label for="email">Email</label>
+        <input class="field" id="email" type="email" autocomplete="email" value="wxiangngaera@gmail.com" required>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <label for="password">Password</label>
+        <input class="field" id="password" type="password" autocomplete="current-password">
+      </div>
+      <button class="btn" type="submit">Sign in</button>
+      <button class="btn ghost" type="button" id="magic">Email me a sign-in link instead</button>
+      <div class="note" id="loginMsg" role="status"></div>
+    </form>
+  </section>
+
+  <!-- Main -->
+  <section id="main" hidden style="display:flex;flex-direction:column;gap:18px;flex:1">
+    <div>
+      <h1 id="greet">Hi, CK</h1>
+      <div class="sub" id="date"></div>
+    </div>
+    <div class="orb-wrap" id="orbWrap">
+      <div class="r1"><div class="r2"><div class="orb"></div></div></div>
+      <div class="status" id="status">Tap the mic to talk</div>
+    </div>
+    <div class="log" id="log" aria-live="polite"></div>
+    <form class="bar" id="typeForm">
+      <input id="typed" placeholder="Or type to Nova…" autocomplete="off" aria-label="Message to Nova">
+      <button class="send" type="submit" aria-label="Send">→</button>
+    </form>
+    <div class="center">
+      <button class="mic" id="mic" aria-label="Talk to Nova">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/></svg>
+      </button>
+    </div>
+  </section>
+</div>
+
+<script type="module">
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const $ = (id) => document.getElementById(id);
+const app = $('app');
+let history = [];
+let busy = false;
+
+// ---------- Sign in ----------
+async function showScreen() {
+  const { data: { session } } = await sb.auth.getSession();
+  $('login').hidden = !!session;
+  $('main').hidden = !session;
+  $('signout').hidden = !session;
+  if (session) {
+    const h = new Date().toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', hour: 'numeric', hour12: false });
+    const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+    $('greet').textContent = part + ', CK';
+    const d = new Date();
+    const day = d.getDate();
+    const sfx = (day % 10 === 1 && day !== 11) ? 'st' : (day % 10 === 2 && day !== 12) ? 'nd' : (day % 10 === 3 && day !== 13) ? 'rd' : 'th';
+    $('date').textContent = d.toLocaleDateString('en-MY', { weekday: 'short' }) + ', ' + day + sfx + ' ' + d.toLocaleDateString('en-MY', { month: 'short' }) + ' ' + d.getFullYear();
+  }
+}
+sb.auth.onAuthStateChange(() => showScreen());
+showScreen();
+
+$('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('loginMsg').textContent = 'Signing in…';
+  const { error } = await sb.auth.signInWithPassword({ email: $('email').value.trim(), password: $('password').value });
+  $('loginMsg').textContent = error ? 'Could not sign in: ' + error.message + '. Try the email link instead.' : '';
+});
+$('magic').addEventListener('click', async () => {
+  $('loginMsg').textContent = 'Sending link…';
+  const { error } = await sb.auth.signInWithOtp({ email: $('email').value.trim(), options: { emailRedirectTo: location.href.split('#')[0], shouldCreateUser: false } });
+  $('loginMsg').textContent = error ? 'Could not send: ' + error.message : 'Check your email and open the link on this device.';
+});
+$('signout').addEventListener('click', () => sb.auth.signOut());
+
+// ---------- Conversation ----------
+function setState(s, text) {
+  app.classList.remove('listening', 'thinking', 'speaking');
+  if (s) app.classList.add(s);
+  $('status').textContent = text;
+}
+function addMsg(cls, text) {
+  const el = document.createElement('div');
+  el.className = 'msg ' + cls;
+  el.textContent = text;
+  $('log').appendChild(el);
+  el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+}
+
+async function ask(text) {
+  if (!text || busy) return;
+  busy = true;
+  addMsg('me', text);
+  setState('thinking', 'Thinking…');
+  try {
+    const { data, error } = await sb.functions.invoke('nova-brain', { body: { message: text, history } });
+    if (error) throw error;
+    if (data.error) throw new Error(data.error);
+    history.push({ role: 'user', content: text }, { role: 'assistant', content: data.reply });
+    history = history.slice(-12);
+    addMsg('nova', data.reply);
+    speak(data.reply);
+  } catch (err) {
+    let msg = err.message || String(err);
+    try { const b = await err.context?.json(); if (b?.error) msg = b.error; } catch {}
+    addMsg('err', 'Nova had a problem: ' + msg);
+    setState(null, 'Tap the mic to talk');
+  } finally {
+    busy = false;
+  }
+}
+
+// ---------- Voice out ----------
+let voice = null;
+function pickVoice() {
+  const vs = speechSynthesis.getVoices();
+  const pref = ['en-SG', 'en-MY', 'en-GB', 'en-AU', 'en-US'];
+  for (const p of pref) { const v = vs.find((x) => x.lang.replace('_', '-') === p); if (v) return v; }
+  return vs.find((x) => x.lang.startsWith('en')) || null;
+}
+if ('speechSynthesis' in window) {
+  voice = pickVoice();
+  speechSynthesis.onvoiceschanged = () => { voice = pickVoice(); };
+}
+function speak(text) {
+  if (!('speechSynthesis' in window)) { setState(null, 'Tap the mic to talk'); return; }
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  if (voice) u.voice = voice;
+  u.rate = 1.05;
+  u.onstart = () => setState('speaking', 'Speaking — tap mic to interrupt');
+  u.onend = u.onerror = () => setState(null, 'Tap the mic to talk');
+  speechSynthesis.speak(u);
+}
+
+// ---------- Voice in ----------
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, listening = false;
+if (SR) {
+  rec = new SR();
+  rec.lang = 'en-MY';
+  rec.interimResults = false;
+  rec.maxAlternatives = 1;
+  rec.onresult = (e) => { listening = false; ask(e.results[0][0].transcript.trim()); };
+  rec.onerror = (e) => {
+    listening = false;
+    setState(null, e.error === 'not-allowed' ? 'Mic blocked — allow microphone access' : 'Didn’t catch that — tap to try again');
+  };
+  rec.onend = () => { if (listening) { listening = false; if (!busy) setState(null, 'Tap the mic to talk'); } };
+}
+$('mic').addEventListener('click', () => {
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  if (!rec) { setState(null, 'Voice not supported here — type instead'); $('typed').focus(); return; }
+  if (listening) { rec.stop(); return; }
+  try { rec.start(); listening = true; setState('listening', 'Listening…'); }
+  catch { setState(null, 'Tap the mic to talk'); }
+});
+$('typeForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const t = $('typed').value.trim();
+  $('typed').value = '';
+  ask(t);
+});
+</script>
+</body>
+</html>
