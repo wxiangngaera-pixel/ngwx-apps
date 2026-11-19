@@ -58,7 +58,10 @@
 <div class="app" id="app">
   <div class="top">
     <div class="brand">NOVA</div>
-    <button class="link" id="signout" hidden>Sign out</button>
+    <div style="display:flex;gap:4px;align-items:center">
+      <button class="link" id="langBtn" hidden aria-label="Change voice language" style="color:var(--purple-text);font-weight:600"></button>
+      <button class="link" id="signout" hidden>Sign out</button>
+    </div>
   </div>
 
   <!-- Sign in -->
@@ -123,6 +126,7 @@ async function showScreen() {
   $('login').hidden = !!session;
   $('main').hidden = !session;
   $('signout').hidden = !session;
+  $('langBtn').hidden = !session;
   if (session) {
     const h = new Date().toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', hour: 'numeric', hour12: false });
     const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
@@ -169,7 +173,7 @@ async function ask(text) {
   addMsg('me', text);
   setState('thinking', 'Thinking…');
   try {
-    const { data, error } = await sb.functions.invoke('nova-brain', { body: { message: text, history } });
+    const { data, error } = await sb.functions.invoke('nova-brain', { body: { message: text, history, lang: LANGS[langIdx].name } });
     if (error) throw error;
     if (data.error) throw new Error(data.error);
     history.push({ role: 'user', content: text }, { role: 'assistant', content: data.reply });
@@ -186,23 +190,48 @@ async function ask(text) {
   }
 }
 
+// ---------- Languages ----------
+const LANGS = [
+  { label: 'EN', code: 'en-US', name: 'English' },
+  { label: '中文', code: 'zh-CN', name: 'Chinese' },
+  { label: 'BM', code: 'ms-MY', name: 'Malay' },
+];
+let langIdx = 0;
+try { langIdx = Math.max(0, LANGS.findIndex((l) => l.code === localStorage.getItem('novaLang'))); } catch {}
+function showLang() { $('langBtn').textContent = LANGS[langIdx].label; }
+showLang();
+$('langBtn').addEventListener('click', () => {
+  langIdx = (langIdx + 1) % LANGS.length;
+  try { localStorage.setItem('novaLang', LANGS[langIdx].code); } catch {}
+  showLang();
+  if (rec) rec.lang = LANGS[langIdx].code;
+  setState(null, 'Listening in ' + LANGS[langIdx].name + ' — tap the mic');
+});
+
 // ---------- Voice out ----------
 let voice = null;
-function pickVoice() {
-  const vs = speechSynthesis.getVoices();
-  const pref = ['en-SG', 'en-MY', 'en-GB', 'en-AU', 'en-US'];
-  for (const p of pref) { const v = vs.find((x) => x.lang.replace('_', '-') === p); if (v) return v; }
-  return vs.find((x) => x.lang.startsWith('en')) || null;
+function pickVoice(lang) {
+  const vs = speechSynthesis.getVoices().map((v) => ({ v, l: v.lang.replace('_', '-') }));
+  const prefs = lang === 'zh' ? ['zh-CN', 'zh-TW', 'zh-HK', 'zh'] : lang === 'ms' ? ['ms-MY', 'ms', 'id-ID'] : ['en-SG', 'en-MY', 'en-GB', 'en-AU', 'en-US'];
+  for (const p of prefs) { const m = vs.find((x) => x.l === p) || vs.find((x) => x.l.startsWith(p)); if (m) return m.v; }
+  return null;
+}
+function replyLang(text) {
+  if (/[\u4e00-\u9fff]/.test(text)) return 'zh';
+  return LANGS[langIdx].code.slice(0, 2) === 'ms' ? 'ms' : 'en';
 }
 if ('speechSynthesis' in window) {
-  voice = pickVoice();
-  speechSynthesis.onvoiceschanged = () => { voice = pickVoice(); };
+  speechSynthesis.getVoices();
+  speechSynthesis.onvoiceschanged = () => {};
 }
 function speak(text) {
   if (!('speechSynthesis' in window)) { setState(null, 'Tap the mic to talk'); return; }
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
+  const rl = replyLang(text);
+  voice = pickVoice(rl);
   if (voice) u.voice = voice;
+  u.lang = rl === 'zh' ? 'zh-CN' : rl === 'ms' ? 'ms-MY' : 'en-US';
   u.rate = 1.05;
   u.onstart = () => setState('speaking', 'Speaking — tap mic to interrupt');
   u.onend = u.onerror = () => setState(null, 'Tap the mic to talk');
@@ -214,8 +243,7 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null, listening = false;
 if (SR) {
   rec = new SR();
-  const nl = (navigator.language || '').replace('_', '-');
-  rec.lang = /^en-(US|GB|AU|SG|IN)$/i.test(nl) ? nl : 'en-US';
+  rec.lang = LANGS[langIdx].code;
   rec.interimResults = false;
   rec.maxAlternatives = 1;
   rec.onresult = (e) => { listening = false; ask(e.results[0][0].transcript.trim()); };
