@@ -233,8 +233,8 @@ function unlockVoice() {
   speechSynthesis.speak(u);
   voiceUnlocked = true;
 }
-document.addEventListener('touchend', unlockVoice, { once: true });
-document.addEventListener('click', unlockVoice, { once: true });
+
+$('log').addEventListener('click', unlockVoice);
 
 function speak(text) {
   if (!('speechSynthesis' in window)) { setState(null, 'Tap the mic to talk'); return; }
@@ -289,13 +289,12 @@ if (SR) {
   rec.onend = () => { if (listening) finishListening(); };
 }
 $('mic').addEventListener('click', () => {
-  unlockVoice();
   if ('speechSynthesis' in window && speechSynthesis.speaking) speechSynthesis.cancel();
   if (!rec) { setState(null, 'Voice not supported here — type instead'); $('typed').focus(); return; }
   if (listening) {
     // Tapped again: send whatever was heard, even if the phone hasn't finished.
     try { rec.stop(); } catch {}
-    setTimeout(() => { if (listening) finishListening(); }, 700);
+    setTimeout(() => { unlockVoice(); if (listening) finishListening(); }, 700);
     return;
   }
   heard = ''; sent = false;
