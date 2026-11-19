@@ -214,14 +214,25 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null, listening = false;
 if (SR) {
   rec = new SR();
-  rec.lang = 'en-MY';
+  const nl = (navigator.language || '').replace('_', '-');
+  rec.lang = /^en-(US|GB|AU|SG|IN)$/i.test(nl) ? nl : 'en-US';
   rec.interimResults = false;
   rec.maxAlternatives = 1;
   rec.onresult = (e) => { listening = false; ask(e.results[0][0].transcript.trim()); };
   rec.onerror = (e) => {
     listening = false;
-    setState(null, e.error === 'not-allowed' ? 'Mic blocked — allow microphone access' : 'Didn’t catch that — tap to try again');
+    const msgs = {
+      'not-allowed': 'Mic blocked — allow microphone access for this app',
+      'service-not-allowed': 'Turn on Dictation: Settings › General › Keyboard › Enable Dictation',
+      'no-speech': 'Didn’t hear anything — tap and speak right away',
+      'audio-capture': 'No microphone found',
+      'network': 'Voice needs internet — check connection',
+      'language-not-supported': 'Voice language not supported — type instead',
+      'aborted': 'Tap the mic to talk',
+    };
+    setState(null, msgs[e.error] || ('Didn’t catch that (' + e.error + ') — tap to try again'));
   };
+  rec.onspeechstart = () => setState('listening', 'Hearing you…');
   rec.onend = () => { if (listening) { listening = false; if (!busy) setState(null, 'Tap the mic to talk'); } };
 }
 $('mic').addEventListener('click', () => {
