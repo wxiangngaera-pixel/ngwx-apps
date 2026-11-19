@@ -59,7 +59,6 @@
   <div class="top">
     <div class="brand">NOVA</div>
     <div style="display:flex;gap:4px;align-items:center">
-      <button class="link" id="langBtn" hidden aria-label="Change voice language" style="color:var(--purple-text);font-weight:600"></button>
       <button class="link" id="signout" hidden>Sign out</button>
     </div>
   </div>
@@ -126,7 +125,6 @@ async function showScreen() {
   $('login').hidden = !!session;
   $('main').hidden = !session;
   $('signout').hidden = !session;
-  $('langBtn').hidden = !session;
   if (session) {
     const h = new Date().toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', hour: 'numeric', hour12: false });
     const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
@@ -173,7 +171,7 @@ async function ask(text) {
   addMsg('me', text);
   setState('thinking', 'Thinking…');
   try {
-    const { data, error } = await sb.functions.invoke('nova-brain', { body: { message: text, history, lang: LANGS[langIdx].name } });
+    const { data, error } = await sb.functions.invoke('nova-brain', { body: { message: text, history } });
     if (error) throw error;
     if (data.error) throw new Error(data.error);
     history.push({ role: 'user', content: text }, { role: 'assistant', content: data.reply });
@@ -190,23 +188,28 @@ async function ask(text) {
   }
 }
 
-// ---------- Languages ----------
-const LANGS = [
-  { label: 'EN', code: 'en-US', name: 'English' },
-  { label: '中文', code: 'zh-CN', name: 'Chinese' },
-  { label: 'BM', code: 'ms-MY', name: 'Malay' },
-];
-let langIdx = 0;
-try { langIdx = Math.max(0, LANGS.findIndex((l) => l.code === localStorage.getItem('novaLang'))); } catch {}
-function showLang() { $('langBtn').textContent = LANGS[langIdx].label; }
-showLang();
-$('langBtn').addEventListener('click', () => {
-  langIdx = (langIdx + 1) % LANGS.length;
-  try { localStorage.setItem('novaLang', LANGS[langIdx].code); } catch {}
-  showLang();
-  if (rec) rec.lang = LANGS[langIdx].code;
-  setState(null, 'Listening in ' + LANGS[langIdx].name + ' — tap the mic');
-});
+async function askAudio(b64, mime) {
+  if (busy) return;
+  busy = true;
+  setState('thinking', 'Thinking\u2026');
+  try {
+    const { data, error } = await sb.functions.invoke('nova-brain', { body: { audio: b64, mime, history } });
+    if (error) throw error;
+    if (data.error) throw new Error(data.error);
+    if (data.heard) addMsg('me', data.heard);
+    history.push({ role: 'user', content: data.heard || '' }, { role: 'assistant', content: data.reply });
+    history = history.slice(-12);
+    addMsg('nova', data.reply);
+    speak(data.reply);
+  } catch (err) {
+    let msg = err.message || String(err);
+    try { const b = await err.context?.json(); if (b?.error) msg = b.error; } catch {}
+    addMsg('err', 'Nova had a problem: ' + msg);
+    setState(null, 'Tap the mic to talk');
+  } finally {
+    busy = false;
+  }
+}
 
 // ---------- Voice out ----------
 let voice = null;
@@ -218,7 +221,8 @@ function pickVoice(lang) {
 }
 function replyLang(text) {
   if (/[\u4e00-\u9fff]/.test(text)) return 'zh';
-  return LANGS[langIdx].code.slice(0, 2) === 'ms' ? 'ms' : 'en';
+  if (/\b(saya|anda|awak|boleh|esok|hari ini|tempahan|pesanan|untuk|dengan|tidak|ada|sahaja|bos)\b/i.test(text)) return 'ms';
+  return 'en';
 }
 if ('speechSynthesis' in window) {
   speechSynthesis.getVoices();
@@ -251,55 +255,49 @@ function speak(text) {
   speechSynthesis.speak(u);
 }
 
-// ---------- Voice in ----------
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec = null, listening = false, heard = '', sent = false;
-function finishListening() {
-  listening = false;
-  const t = heard.trim();
-  heard = '';
-  if (t && !sent) { sent = true; $('typed').value = ''; ask(t); }
-  else if (!busy) setState(null, 'Didn’t hear anything — tap and speak');
+// ---------- Voice in: Nova records, OpenAI transcribes (auto language) ----------
+let mediaRec = null, chunks = [], micStream = null, recording = false, stopTimer = null;
+function pickMime() {
+  if (!window.MediaRecorder) return null;
+  for (const m of ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg']) {
+    if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m;
+  }
+  return '';
 }
-if (SR) {
-  rec = new SR();
-  rec.lang = LANGS[langIdx].code;
-  rec.interimResults = true;   // phones often only give "in-progress" text
-  rec.continuous = false;
-  rec.maxAlternatives = 1;
-  rec.onresult = (e) => {
-    let t = '';
-    for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
-    heard = t;
-    $('typed').value = t;      // show what Nova is hearing, live
-    setState('listening', 'Hearing you… tap mic when done');
-    const last = e.results[e.results.length - 1];
-    if (last.isFinal) { try { rec.stop(); } catch {} }
+async function startRecording() {
+  const mime = pickMime();
+  if (mime === null) { setState(null, 'Recording not supported here \u2014 type instead'); return; }
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    setState(null, 'Mic blocked \u2014 allow microphone access for Nova'); return;
+  }
+  chunks = [];
+  mediaRec = mime ? new MediaRecorder(micStream, { mimeType: mime }) : new MediaRecorder(micStream);
+  mediaRec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  mediaRec.onstop = async () => {
+    micStream.getTracks().forEach((t) => t.stop());
+    const type = mediaRec.mimeType || mime || 'audio/mp4';
+    const blob = new Blob(chunks, { type });
+    if (blob.size < 2000) { setState(null, 'Too short \u2014 tap, speak, then tap again'); return; }
+    const b64 = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.readAsDataURL(blob); });
+    askAudio(b64, type);
   };
-  rec.onerror = (e) => {
-    const msgs = {
-      'not-allowed': 'Mic blocked — allow microphone access for this app',
-      'service-not-allowed': 'Turn on Dictation: Settings › General › Keyboard › Enable Dictation',
-      'audio-capture': 'No microphone found',
-      'network': 'Voice needs internet — check connection',
-      'language-not-supported': 'Voice language not supported — type instead',
-    };
-    if (msgs[e.error]) { listening = false; heard = ''; setState(null, msgs[e.error]); }
-  };
-  rec.onend = () => { if (listening) finishListening(); };
+  mediaRec.start();
+  recording = true;
+  setState('listening', 'Recording\u2026 tap the mic when done');
+  stopTimer = setTimeout(() => { if (recording) stopRecording(); }, 45000);
+}
+function stopRecording() {
+  clearTimeout(stopTimer);
+  recording = false;
+  try { mediaRec.stop(); } catch {}
 }
 $('mic').addEventListener('click', () => {
   if ('speechSynthesis' in window && speechSynthesis.speaking) speechSynthesis.cancel();
-  if (!rec) { setState(null, 'Voice not supported here — type instead'); $('typed').focus(); return; }
-  if (listening) {
-    // Tapped again: send whatever was heard, even if the phone hasn't finished.
-    try { rec.stop(); } catch {}
-    setTimeout(() => { unlockVoice(); if (listening) finishListening(); }, 700);
-    return;
-  }
-  heard = ''; sent = false;
-  try { rec.lang = LANGS[langIdx].code; rec.start(); listening = true; setState('listening', 'Listening… speak now'); }
-  catch { setState(null, 'Tap the mic to talk'); }
+  if (busy) return;
+  if (recording) { stopRecording(); unlockVoice(); return; }
+  startRecording();
 });
 $('typeForm').addEventListener('submit', (e) => {
   e.preventDefault();
