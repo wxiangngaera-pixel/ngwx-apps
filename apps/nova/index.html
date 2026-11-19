@@ -240,34 +240,52 @@ function speak(text) {
 
 // ---------- Voice in ----------
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec = null, listening = false;
+let rec = null, listening = false, heard = '', sent = false;
+function finishListening() {
+  listening = false;
+  const t = heard.trim();
+  heard = '';
+  if (t && !sent) { sent = true; $('typed').value = ''; ask(t); }
+  else if (!busy) setState(null, 'Didn’t hear anything — tap and speak');
+}
 if (SR) {
   rec = new SR();
   rec.lang = LANGS[langIdx].code;
-  rec.interimResults = false;
+  rec.interimResults = true;   // phones often only give "in-progress" text
+  rec.continuous = false;
   rec.maxAlternatives = 1;
-  rec.onresult = (e) => { listening = false; ask(e.results[0][0].transcript.trim()); };
+  rec.onresult = (e) => {
+    let t = '';
+    for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+    heard = t;
+    $('typed').value = t;      // show what Nova is hearing, live
+    setState('listening', 'Hearing you… tap mic when done');
+    const last = e.results[e.results.length - 1];
+    if (last.isFinal) { try { rec.stop(); } catch {} }
+  };
   rec.onerror = (e) => {
-    listening = false;
     const msgs = {
       'not-allowed': 'Mic blocked — allow microphone access for this app',
       'service-not-allowed': 'Turn on Dictation: Settings › General › Keyboard › Enable Dictation',
-      'no-speech': 'Didn’t hear anything — tap and speak right away',
       'audio-capture': 'No microphone found',
       'network': 'Voice needs internet — check connection',
       'language-not-supported': 'Voice language not supported — type instead',
-      'aborted': 'Tap the mic to talk',
     };
-    setState(null, msgs[e.error] || ('Didn’t catch that (' + e.error + ') — tap to try again'));
+    if (msgs[e.error]) { listening = false; heard = ''; setState(null, msgs[e.error]); }
   };
-  rec.onspeechstart = () => setState('listening', 'Hearing you…');
-  rec.onend = () => { if (listening) { listening = false; if (!busy) setState(null, 'Tap the mic to talk'); } };
+  rec.onend = () => { if (listening) finishListening(); };
 }
 $('mic').addEventListener('click', () => {
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   if (!rec) { setState(null, 'Voice not supported here — type instead'); $('typed').focus(); return; }
-  if (listening) { rec.stop(); return; }
-  try { rec.start(); listening = true; setState('listening', 'Listening…'); }
+  if (listening) {
+    // Tapped again: send whatever was heard, even if the phone hasn't finished.
+    try { rec.stop(); } catch {}
+    setTimeout(() => { if (listening) finishListening(); }, 700);
+    return;
+  }
+  heard = ''; sent = false;
+  try { rec.lang = LANGS[langIdx].code; rec.start(); listening = true; setState('listening', 'Listening… speak now'); }
   catch { setState(null, 'Tap the mic to talk'); }
 });
 $('typeForm').addEventListener('submit', (e) => {
