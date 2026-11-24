@@ -183,7 +183,7 @@ $('magic').addEventListener('click', async () => {
   const { error } = await sb.auth.signInWithOtp({ email: $('email').value.trim(), options: { emailRedirectTo: location.href.split('#')[0], shouldCreateUser: false } });
   $('loginMsg').textContent = error ? 'Could not send: ' + error.message : 'Check your email and open the link on this device.';
 });
-$('signout').addEventListener('click', () => { historyLoaded = false; $('log').innerHTML = ''; lastDay = ''; history = []; sb.auth.signOut(); });
+$('signout').addEventListener('click', () => { historyLoaded = false; oldestAt = null; allLoaded = false; $('log').innerHTML = ''; lastDay = ''; history = []; sb.auth.signOut(); });
 
 // ---------- Conversation ----------
 function setState(s, text) {
@@ -204,6 +204,7 @@ function addMsg(cls, text, when) {
     const sep = document.createElement('div');
     sep.className = 'day';
     sep.textContent = day === fmtDay(new Date()) ? 'Today' : day;
+    sep.dataset.day = day;
     $('log').appendChild(sep);
     lastDay = day;
   }
@@ -220,16 +221,74 @@ function addMsg(cls, text, when) {
 }
 
 // ---------- Conversation history (saved in Supabase, only Boss can read it) ----------
-let historyLoaded = false;
+let historyLoaded = false, oldestAt = null, allLoaded = false;
+const PAGE = 60;
+function msgEl(cls, text, when) {
+  const d = new Date(when);
+  const el = document.createElement('div');
+  el.className = 'msg ' + cls;
+  el.textContent = text;
+  const t = document.createElement('time');
+  t.textContent = d.toLocaleTimeString('en-MY', { hour: 'numeric', minute: '2-digit' });
+  el.appendChild(t);
+  return el;
+}
+function dayEl(when) {
+  const day = fmtDay(new Date(when));
+  const sep = document.createElement('div');
+  sep.className = 'day';
+  sep.textContent = day === fmtDay(new Date()) ? 'Today' : day;
+  sep.dataset.day = day;
+  return sep;
+}
+async function fetchPage() {
+  let q = sb.from('nova_messages').select('role,content,created_at').order('created_at', { ascending: false }).limit(PAGE);
+  if (oldestAt) q = q.lt('created_at', oldestAt);
+  const { data, error } = await q;
+  if (error || !data) return [];
+  if (data.length < PAGE) allLoaded = true;
+  if (data.length) oldestAt = data[data.length - 1].created_at;
+  return data.reverse();
+}
+function moreButton() {
+  let b = document.getElementById('moreBtn');
+  if (allLoaded) { if (b) b.remove(); return; }
+  if (!b) {
+    b = document.createElement('button');
+    b.id = 'moreBtn'; b.className = 'link'; b.type = 'button';
+    b.style.alignSelf = 'center';
+    b.textContent = 'Show earlier messages';
+    b.addEventListener('click', loadEarlier);
+  }
+  $('log').prepend(b);
+}
 async function loadHistory() {
   if (historyLoaded) return;
   historyLoaded = true;
-  const { data, error } = await sb.from('nova_messages').select('role,content,created_at').order('created_at', { ascending: false }).limit(60);
-  if (error || !data) return;
+  const rows = await fetchPage();
   $('log').innerHTML = ''; lastDay = '';
-  const rows = data.reverse();
   for (const r of rows) addMsg(r.role === 'user' ? 'me' : 'nova', r.content, r.created_at);
   history = rows.slice(-12).map((r) => ({ role: r.role, content: r.content }));
+  moreButton();
+}
+async function loadEarlier() {
+  const log = $('log');
+  const before = log.scrollHeight;
+  const rows = await fetchPage();
+  document.getElementById('moreBtn')?.remove();
+  // Drop the first date label if the older page ends on the same day; it gets re-added below.
+  const firstSep = log.querySelector('.day');
+  const frag = document.createDocumentFragment();
+  let day = '';
+  for (const r of rows) {
+    const d = fmtDay(new Date(r.created_at));
+    if (d !== day) { frag.appendChild(dayEl(r.created_at)); day = d; }
+    frag.appendChild(msgEl(r.role === 'user' ? 'me' : 'nova', r.content, r.created_at));
+  }
+  if (firstSep && firstSep.dataset.day === day) firstSep.remove();
+  log.prepend(frag);
+  moreButton();
+  log.scrollTop += log.scrollHeight - before;
 }
 function saveExchange(q, a) {
   if (!q || !a) return;
