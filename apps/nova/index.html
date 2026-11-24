@@ -650,7 +650,7 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 // ---------- Actions on this phone / Mac (always need Boss's tap) ----------
-const ACT_LABEL = { call: 'Call', whatsapp: 'WhatsApp', sms: 'Message', email: 'Email', navigate: 'Navigate', calendar: 'Calendar event', reminder: 'Reminder' };
+const ACT_LABEL = { call: 'Call', whatsapp: 'WhatsApp', sms: 'Message', email: 'Email', navigate: 'Navigate', calendar: 'Calendar event', reminder: 'Reminder (Calendar alert)' };
 function digits(p) { return String(p || '').replace(/[^\d]/g, ''); }
 function fmtWhen(iso) {
   if (!iso) return '';
@@ -686,25 +686,22 @@ function runAction(a) {
         : 'https://waze.com/ul?q=' + q + '&navigate=yes';
       return;
     }
-    case 'calendar': {
-      const start = a.start || new Date().toISOString();
-      const end = a.end || new Date(new Date(start).getTime() + 3600000).toISOString();
+    case 'calendar':
+    case 'reminder': {
+      // Both become a Calendar event (.ics). Reminders: 15-min event with an alert at the exact time.
+      const isRem = a.type === 'reminder';
+      const start = a.start || new Date(Date.now() + 3600000).toISOString();
+      const end = a.end && !isRem ? a.end : new Date(new Date(start).getTime() + (isRem ? 900000 : 3600000)).toISOString();
+      const title = isRem ? '\u23F0 ' + (a.text || a.title || 'Reminder') : (a.title || 'Event');
       const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Nova//EN', 'BEGIN:VEVENT',
         'UID:' + Date.now() + '@nova', 'DTSTAMP:' + icsTime(new Date().toISOString()),
-        'DTSTART:' + icsTime(start), 'DTEND:' + icsTime(end), 'SUMMARY:' + icsEsc(a.title || 'Event'),
-        a.place ? 'LOCATION:' + icsEsc(a.place) : '', a.text ? 'DESCRIPTION:' + icsEsc(a.text) : '',
-        'BEGIN:VALARM', 'TRIGGER:-PT30M', 'ACTION:DISPLAY', 'DESCRIPTION:Reminder', 'END:VALARM',
+        'DTSTART:' + icsTime(start), 'DTEND:' + icsTime(end), 'SUMMARY:' + icsEsc(title),
+        a.place ? 'LOCATION:' + icsEsc(a.place) : '', (!isRem && a.text) ? 'DESCRIPTION:' + icsEsc(a.text) : '',
+        'BEGIN:VALARM', 'TRIGGER:' + (isRem ? 'PT0M' : '-PT30M'), 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc(title), 'END:VALARM',
         'END:VEVENT', 'END:VCALENDAR'].filter(Boolean).join('\r\n');
       const url = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }));
-      const link = document.createElement('a'); link.href = url; link.download = 'nova-event.ics';
+      const link = document.createElement('a'); link.href = url; link.download = isRem ? 'nova-reminder.ics' : 'nova-event.ics';
       document.body.appendChild(link); link.click(); link.remove();
-      return;
-    }
-    case 'reminder': {
-      // Runs Boss's "NOVA Reminder" shortcut: line 1 = reminder text, line 2 = alert time.
-      const when = a.start ? new Date(a.start).toLocaleString('en-US', { timeZone: 'Asia/Kuala_Lumpur', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
-      const payload = (a.text || a.title || 'Reminder') + '\n' + when;
-      location.href = 'shortcuts://run-shortcut?name=' + enc('NOVA Reminder') + '&input=text&text=' + enc(payload);
       return;
     }
   }
