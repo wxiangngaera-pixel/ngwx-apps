@@ -59,6 +59,7 @@
   <div class="top">
     <div class="brand">NOVA</div>
     <div style="display:flex;gap:4px;align-items:center">
+      <button class="link" id="voiceBtn" hidden style="color:var(--purple-text);font-weight:600">Voice lock</button>
       <button class="link" id="signout" hidden>Sign out</button>
     </div>
   </div>
@@ -84,11 +85,39 @@
     </form>
   </section>
 
+  <!-- Voice lock setup -->
+  <section id="enroll" hidden style="display:flex;flex-direction:column;gap:16px;flex:1">
+    <div>
+      <h1>Teach Nova your voice</h1>
+      <div class="sub">Somewhere quiet. Tap record and read the text below out loud in your normal voice, in any language. Tap again to stop.</div>
+    </div>
+    <div class="card" style="font-size:16px;line-height:1.6">
+      Hi Nova, this is your Boss. I run AERA Meal Prep and I sell property with Alphas Estate Solutions.
+      Every morning I want to know how many orders we have, how many new leads came in, and how our ads are doing.
+      Only listen to my voice and nobody else's. 我是你的老板，只听我的声音。Saya bos awak, dengar suara saya sahaja.
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="height:10px;border-radius:999px;background:var(--line);overflow:hidden"><div id="enrollBar" style="height:100%;width:0%;background:var(--orange);transition:width .3s"></div></div>
+      <div class="note" id="enrollMsg" role="status">0% — tap record to start</div>
+    </div>
+    <div style="flex:1"></div>
+    <div class="center" style="flex-direction:column;align-items:center;gap:14px">
+      <button class="mic" id="enrollRec" aria-label="Record voice sample">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/></svg>
+      </button>
+      <button class="link" id="enrollCancel">Back</button>
+    </div>
+  </section>
+
   <!-- Main -->
   <section id="main" hidden style="display:flex;flex-direction:column;gap:18px;flex:1">
     <div>
       <h1 id="greet">Hi, Boss</h1>
       <div class="sub" id="date"></div>
+    </div>
+    <div class="card" id="lockBanner" hidden style="flex-direction:row;align-items:center;gap:12px;padding:12px 14px">
+      <div style="flex:1;font-size:13px;color:var(--muted)">Voice lock is off. Teach Nova your voice so it only answers you.</div>
+      <button class="send" type="button" id="lockSetup" style="min-width:auto;padding:0 14px;color:var(--orange);border-color:var(--orange)">Set up</button>
     </div>
     <div class="orb-wrap" id="orbWrap">
       <div class="r1"><div class="r2"><div class="orb"></div></div></div>
@@ -125,6 +154,8 @@ async function showScreen() {
   $('login').hidden = !!session;
   $('main').hidden = !session;
   $('signout').hidden = !session;
+  $('voiceBtn').hidden = !session;
+  if (session) loadVoiceProfile();
   if (session) {
     const h = new Date().toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', hour: 'numeric', hour12: false });
     const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
@@ -280,16 +311,24 @@ async function startRecording() {
     const type = mediaRec.mimeType || mime || 'audio/mp4';
     const blob = new Blob(chunks, { type });
     if (blob.size < 2000) { setState(null, 'Too short \u2014 tap, speak, then tap again'); return; }
+    if (recordTarget === 'enroll') { enrollFrom(blob); return; }
+    if (voiceProfile) {
+      setState('thinking', 'Checking it\u2019s you\u2026');
+      const ok = await checkVoice(blob);
+      if (!ok) return;
+    }
     const b64 = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.readAsDataURL(blob); });
     askAudio(b64, type);
   };
   mediaRec.start();
   recording = true;
-  setState('listening', 'Recording\u2026 tap the mic when done');
+  if (recordTarget === 'enroll') { $('enrollRec').style.background = 'var(--orange)'; $('enrollMsg').textContent = 'Recording\u2026 read the text, then tap to stop'; }
+  else setState('listening', 'Recording\u2026 tap the mic when done');
   stopTimer = setTimeout(() => { if (recording) stopRecording(); }, 45000);
 }
 function stopRecording() {
   clearTimeout(stopTimer);
+  $('enrollRec').style.background = '';
   recording = false;
   try { mediaRec.stop(); } catch {}
 }
@@ -297,8 +336,119 @@ $('mic').addEventListener('click', () => {
   if ('speechSynthesis' in window && speechSynthesis.speaking) speechSynthesis.cancel();
   if (busy) return;
   if (recording) { stopRecording(); unlockVoice(); return; }
+  recordTarget = 'ask';
   startRecording();
 });
+// ---------- Voice lock (Picovoice Eagle, runs on this device) ----------
+const VOICE_THRESHOLD = 0.5;   // 0–1; raise if others get through, lower if you get rejected
+let recordTarget = 'ask', voiceProfile = null, eagleKey = null, eagle = null, profiler = null;
+const EAGLE_MODEL = { publicPath: 'eagle_params.pv', customWritePath: 'nova_eagle_3', version: 1 };
+
+function b64ToBytes(b) { return Uint8Array.from(atob(b), (c) => c.charCodeAt(0)); }
+function bytesToB64(u) { let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); }
+
+async function loadVoiceProfile() {
+  const { data } = await sb.from('nova_voice_profiles').select('profile').maybeSingle();
+  voiceProfile = data?.profile ? { bytes: b64ToBytes(data.profile) } : null;
+  $('lockBanner').hidden = !!voiceProfile;
+  $('voiceBtn').textContent = voiceProfile ? 'Voice lock \u2713' : 'Voice lock';
+}
+
+async function loadEagleLib() {
+  if (window.EagleWeb) return;
+  await new Promise((res, rej) => {
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/@picovoice/eagle-web@3.0.1/dist/iife/index.js';
+    sc.onload = res; sc.onerror = () => rej(new Error('Could not load the voice lock engine'));
+    document.head.appendChild(sc);
+  });
+}
+async function getEagleKey() {
+  if (eagleKey) return eagleKey;
+  const { data, error } = await sb.functions.invoke('nova-config', { body: {} });
+  if (error) { let m = error.message; try { const b = await error.context?.json(); if (b?.error) m = b.error; } catch {} throw new Error(m); }
+  eagleKey = data.picovoiceKey;
+  return eagleKey;
+}
+
+// Turn a recording into 16 kHz, 16-bit mono samples, which is what Eagle needs.
+async function toPcm(blob, rate) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ac = new AC();
+  const buf = await new Promise((res, rej) => blob.arrayBuffer().then((ab) => ac.decodeAudioData(ab, res, rej)));
+  ac.close && ac.close();
+  const off = new OfflineAudioContext(1, Math.ceil(buf.duration * rate), rate);
+  const src = off.createBufferSource(); src.buffer = buf; src.connect(off.destination); src.start();
+  const out = (await off.startRendering()).getChannelData(0);
+  const pcm = new Int16Array(out.length);
+  for (let i = 0; i < out.length; i++) { const v = Math.max(-1, Math.min(1, out[i])); pcm[i] = v < 0 ? v * 0x8000 : v * 0x7fff; }
+  return pcm;
+}
+
+async function enrollFrom(blob) {
+  const msg = $('enrollMsg');
+  try {
+    msg.textContent = 'Learning your voice\u2026';
+    await loadEagleLib();
+    if (!profiler) profiler = await window.EagleWeb.EagleProfiler.create(await getEagleKey(), EAGLE_MODEL);
+    const pcm = await toPcm(blob, profiler.sampleRate);
+    const n = profiler.frameLength;
+    let pct = 0;
+    for (let i = 0; i + n <= pcm.length; i += n) pct = await profiler.enroll(pcm.slice(i, i + n));
+    $('enrollBar').style.width = Math.min(100, pct) + '%';
+    if (pct < 100) { msg.textContent = Math.round(pct) + '% \u2014 tap record and read it again'; return; }
+    const prof = await profiler.export();
+    const { data: { user } } = await sb.auth.getUser();
+    const { error } = await sb.from('nova_voice_profiles').upsert({ user_id: user.id, profile: bytesToB64(prof.bytes), updated_at: new Date().toISOString() });
+    if (error) throw error;
+    await profiler.reset();
+    msg.textContent = '100% \u2014 voice lock is on. Nova will only answer you.';
+    await loadVoiceProfile();
+    setTimeout(() => showEnroll(false), 1500);
+  } catch (e) {
+    msg.textContent = 'Problem: ' + (e.message || e);
+  }
+}
+
+async function checkVoice(blob) {
+  try {
+    await loadEagleLib();
+    if (!eagle) eagle = await window.EagleWeb.Eagle.create(await getEagleKey(), EAGLE_MODEL);
+    const pcm = await toPcm(blob, eagle.sampleRate);
+    if (pcm.length <= eagle.minProcessSamples) { setState(null, 'Speak a bit longer so I can recognise you'); return false; }
+    const scores = await eagle.process(pcm, voiceProfile);
+    if (!scores) { setState(null, 'Didn\u2019t hear enough voice \u2014 try again'); return false; }
+    if (scores[0] < VOICE_THRESHOLD) {
+      const no = 'Sorry, I only take orders from Boss.';
+      addMsg('err', no + ' (voice match ' + Math.round(scores[0] * 100) + '%)');
+      speak(no);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    addMsg('err', 'Voice lock problem: ' + (e.message || e));
+    setState(null, 'Tap the mic to talk');
+    return false;
+  }
+}
+
+function showEnroll(on) {
+  $('enroll').hidden = !on;
+  $('main').hidden = on;
+  if (on) { $('enrollBar').style.width = '0%'; $('enrollMsg').textContent = '0% \u2014 tap record to start'; if (profiler) profiler.reset(); }
+}
+$('voiceBtn').addEventListener('click', () => {
+  if (voiceProfile && !confirm('Voice lock is on. Re-train it with a new recording?')) return;
+  showEnroll(true);
+});
+$('lockSetup').addEventListener('click', () => showEnroll(true));
+$('enrollCancel').addEventListener('click', () => showEnroll(false));
+$('enrollRec').addEventListener('click', () => {
+  if (recording) { stopRecording(); return; }
+  recordTarget = 'enroll';
+  startRecording();
+});
+
 $('typeForm').addEventListener('submit', (e) => {
   e.preventDefault();
   unlockVoice();
