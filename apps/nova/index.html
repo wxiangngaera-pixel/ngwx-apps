@@ -128,7 +128,8 @@
       <input id="typed" placeholder="Or type to Nova…" autocomplete="off" aria-label="Message to Nova">
       <button class="send" type="submit" aria-label="Send">→</button>
     </form>
-    <div class="center">
+    <div class="center" style="gap:18px;align-items:center">
+      <button class="send" type="button" id="handsFree" aria-pressed="false" style="min-width:auto;padding:0 14px;font-size:13px">Hands-free: off</button>
       <button class="mic" id="mic" aria-label="Talk to Nova">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/></svg>
       </button>
@@ -184,6 +185,7 @@ $('signout').addEventListener('click', () => sb.auth.signOut());
 
 // ---------- Conversation ----------
 function setState(s, text) {
+  if (!s && typeof handsFreeOn !== 'undefined' && handsFreeOn) setTimeout(() => resumeWake(), 400);
   app.classList.remove('listening', 'thinking', 'speaking');
   if (s) app.classList.add(s);
   $('status').textContent = text;
@@ -322,7 +324,9 @@ async function startRecording() {
   };
   mediaRec.start();
   recording = true;
+  if (recordTarget === 'wake') watchSilence(micStream);
   if (recordTarget === 'enroll') { $('enrollRec').style.background = 'var(--orange)'; $('enrollMsg').textContent = 'Recording\u2026 read the text, then tap to stop'; }
+  else if (recordTarget === 'wake') setState('listening', 'Yes Boss? I\u2019m listening\u2026');
   else setState('listening', 'Recording\u2026 tap the mic when done');
   stopTimer = setTimeout(() => { if (recording) stopRecording(); }, 45000);
 }
@@ -337,7 +341,7 @@ $('mic').addEventListener('click', () => {
   if (busy) return;
   if (recording) { stopRecording(); unlockVoice(); return; }
   recordTarget = 'ask';
-  startRecording();
+  if (handsFreeOn) pauseWake().then(startRecording); else startRecording();
 });
 // ---------- Voice lock (Picovoice Eagle, runs on this device) ----------
 const VOICE_THRESHOLD = 0.5;   // 0–1; raise if others get through, lower if you get rejected
@@ -447,6 +451,96 @@ $('enrollRec').addEventListener('click', () => {
   if (recording) { stopRecording(); return; }
   recordTarget = 'enroll';
   startRecording();
+});
+
+// ---------- Hands-free: say "Nova" (Picovoice Porcupine, runs on this device) ----------
+let handsFreeOn = false, porcupine = null, wakeActive = false, wakeLock = null, wakeLabel = 'Nova';
+const PORCUPINE_MODEL = { publicPath: 'porcupine_params.pv', customWritePath: 'nova_porcupine_4', version: 1 };
+
+async function loadScript(src, globalName) {
+  if (window[globalName]) return;
+  await new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = () => rej(new Error('Could not load ' + globalName)); document.head.appendChild(sc); });
+}
+async function keywordForNova() {
+  // Custom "Nova" wake word file (trained in Picovoice Console). Until it exists, use the built-in "Jarvis".
+  try {
+    const r = await fetch('nova_wasm.ppn', { method: 'HEAD', cache: 'no-store' });
+    if (r.ok) { wakeLabel = 'Nova'; return { publicPath: 'nova_wasm.ppn', label: 'Nova', sensitivity: 0.6, customWritePath: 'nova_kw_1', version: 1 }; }
+  } catch {}
+  wakeLabel = 'Jarvis';
+  return { builtin: window.PorcupineWeb.BuiltInKeyword.Jarvis, sensitivity: 0.6 };
+}
+async function startWake() {
+  await loadScript('https://cdn.jsdelivr.net/npm/@picovoice/web-voice-processor@4.0.8/dist/iife/index.js', 'WebVoiceProcessor');
+  await loadScript('https://cdn.jsdelivr.net/npm/@picovoice/porcupine-web@4.0.1/dist/iife/index.js', 'PorcupineWeb');
+  if (!porcupine) {
+    const kw = await keywordForNova();
+    porcupine = await window.PorcupineWeb.PorcupineWorker.create(await getEagleKey(), kw, onWake, PORCUPINE_MODEL);
+  }
+  await resumeWake();
+}
+async function resumeWake() {
+  if (!handsFreeOn || !porcupine || wakeActive || recording || busy || ('speechSynthesis' in window && speechSynthesis.speaking)) return;
+  try {
+    await window.WebVoiceProcessor.WebVoiceProcessor.subscribe(porcupine);
+    wakeActive = true;
+    $('status').textContent = 'Say \u201c' + wakeLabel + '\u201d to talk';
+  } catch (e) { $('status').textContent = 'Hands-free problem: ' + (e.message || e); }
+}
+async function pauseWake() {
+  if (!wakeActive) return;
+  wakeActive = false;
+  try { await window.WebVoiceProcessor.WebVoiceProcessor.unsubscribe(porcupine); } catch {}
+}
+async function onWake() {
+  if (!handsFreeOn || recording || busy) return;
+  await pauseWake();
+  if ('speechSynthesis' in window && speechSynthesis.speaking) speechSynthesis.cancel();
+  recordTarget = 'wake';
+  startRecording();
+}
+// Stop recording by itself once Boss stops talking.
+function watchSilence(stream) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ac = new AC(), an = ac.createAnalyser();
+  ac.createMediaStreamSource(stream).connect(an);
+  an.fftSize = 1024;
+  const data = new Uint8Array(an.fftSize);
+  let heardSpeech = false, quietSince = Date.now(), started = Date.now();
+  const t = setInterval(() => {
+    if (!recording) { clearInterval(t); ac.close(); return; }
+    an.getByteTimeDomainData(data);
+    let sum = 0; for (const v of data) { const x = (v - 128) / 128; sum += x * x; }
+    const loud = Math.sqrt(sum / data.length) > 0.04;
+    if (loud) { heardSpeech = true; quietSince = Date.now(); }
+    const quietFor = Date.now() - quietSince;
+    if ((heardSpeech && quietFor > 1300) || (!heardSpeech && Date.now() - started > 6000) || Date.now() - started > 20000) {
+      clearInterval(t); ac.close(); stopRecording(); unlockVoice();
+    }
+  }, 100);
+}
+async function setHandsFree(on) {
+  handsFreeOn = on;
+  const b = $('handsFree');
+  b.textContent = on ? 'Hands-free: on' : 'Hands-free: off';
+  b.setAttribute('aria-pressed', String(on));
+  b.style.color = on ? 'var(--orange)' : '';
+  b.style.borderColor = on ? 'var(--orange)' : '';
+  if (on) {
+    unlockVoice();
+    try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {}
+    try { await startWake(); }
+    catch (e) { handsFreeOn = false; setHandsFree(false); addMsg('err', 'Hands-free needs the Picovoice key: ' + (e.message || e)); }
+  } else {
+    await pauseWake();
+    try { await wakeLock?.release(); } catch {}
+    wakeLock = null;
+    setState(null, 'Tap the mic to talk');
+  }
+}
+$('handsFree').addEventListener('click', () => setHandsFree(!handsFreeOn));
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && handsFreeOn) { try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {} resumeWake(); }
 });
 
 $('typeForm').addEventListener('submit', (e) => {
