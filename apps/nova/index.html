@@ -39,6 +39,8 @@
   .me{align-self:flex-end;background:var(--line);border-radius:18px 18px 4px 18px}
   .nova{align-self:flex-start;background:var(--card);border:1px solid var(--line);border-radius:18px 18px 18px 4px}
   .err{align-self:center;color:var(--orange);font-size:13px;text-align:center}
+  .day{align-self:center;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin:6px 0}
+  .msg time{display:block;font-size:11px;color:var(--muted);margin-top:4px}
   .bar{display:flex;gap:10px;align-items:center}
   .bar input{flex:1;min-height:48px;border-radius:14px;border:1px solid var(--line);background:var(--card);color:var(--text);padding:0 14px;font:inherit;font-size:15px}
   .send{min-width:48px;min-height:48px;border-radius:14px;border:1px solid var(--ring2);background:none;color:var(--purple-text);font:inherit;font-weight:600;cursor:pointer}
@@ -156,7 +158,7 @@ async function showScreen() {
   $('main').hidden = !session;
   $('signout').hidden = !session;
   $('voiceBtn').hidden = !session;
-  if (session) loadVoiceProfile();
+  if (session) { loadVoiceProfile(); loadHistory(); }
   if (session) {
     const h = new Date().toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', hour: 'numeric', hour12: false });
     const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
@@ -181,7 +183,7 @@ $('magic').addEventListener('click', async () => {
   const { error } = await sb.auth.signInWithOtp({ email: $('email').value.trim(), options: { emailRedirectTo: location.href.split('#')[0], shouldCreateUser: false } });
   $('loginMsg').textContent = error ? 'Could not send: ' + error.message : 'Check your email and open the link on this device.';
 });
-$('signout').addEventListener('click', () => sb.auth.signOut());
+$('signout').addEventListener('click', () => { historyLoaded = false; $('log').innerHTML = ''; lastDay = ''; history = []; sb.auth.signOut(); });
 
 // ---------- Conversation ----------
 function setState(s, text) {
@@ -190,12 +192,48 @@ function setState(s, text) {
   if (s) app.classList.add(s);
   $('status').textContent = text;
 }
-function addMsg(cls, text) {
+function fmtDay(d) {
+  const n = d.getDate(), sfx = (n % 10 === 1 && n !== 11) ? 'st' : (n % 10 === 2 && n !== 12) ? 'nd' : (n % 10 === 3 && n !== 13) ? 'rd' : 'th';
+  return n + sfx + ' ' + d.toLocaleDateString('en-MY', { month: 'short' }) + ' ' + d.getFullYear();
+}
+let lastDay = '';
+function addMsg(cls, text, when) {
+  const d = when ? new Date(when) : new Date();
+  const day = fmtDay(d);
+  if (cls !== 'err' && day !== lastDay) {
+    const sep = document.createElement('div');
+    sep.className = 'day';
+    sep.textContent = day === fmtDay(new Date()) ? 'Today' : day;
+    $('log').appendChild(sep);
+    lastDay = day;
+  }
   const el = document.createElement('div');
   el.className = 'msg ' + cls;
   el.textContent = text;
+  if (cls !== 'err') {
+    const t = document.createElement('time');
+    t.textContent = d.toLocaleTimeString('en-MY', { hour: 'numeric', minute: '2-digit' });
+    el.appendChild(t);
+  }
   $('log').appendChild(el);
-  el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  el.scrollIntoView({ behavior: when ? 'auto' : 'smooth', block: 'end' });
+}
+
+// ---------- Conversation history (saved in Supabase, only Boss can read it) ----------
+let historyLoaded = false;
+async function loadHistory() {
+  if (historyLoaded) return;
+  historyLoaded = true;
+  const { data, error } = await sb.from('nova_messages').select('role,content,created_at').order('created_at', { ascending: false }).limit(60);
+  if (error || !data) return;
+  $('log').innerHTML = ''; lastDay = '';
+  const rows = data.reverse();
+  for (const r of rows) addMsg(r.role === 'user' ? 'me' : 'nova', r.content, r.created_at);
+  history = rows.slice(-12).map((r) => ({ role: r.role, content: r.content }));
+}
+function saveExchange(q, a) {
+  if (!q || !a) return;
+  sb.from('nova_messages').insert([{ role: 'user', content: q }, { role: 'assistant', content: a }]).then(() => {});
 }
 
 async function ask(text) {
@@ -208,6 +246,7 @@ async function ask(text) {
     if (error) throw error;
     if (data.error) throw new Error(data.error);
     history.push({ role: 'user', content: text }, { role: 'assistant', content: data.reply });
+    saveExchange(text, data.reply);
     history = history.slice(-12);
     addMsg('nova', data.reply);
     speak(data.reply);
@@ -231,6 +270,7 @@ async function askAudio(b64, mime) {
     if (data.error) throw new Error(data.error);
     if (data.heard) addMsg('me', data.heard);
     history.push({ role: 'user', content: data.heard || '' }, { role: 'assistant', content: data.reply });
+    saveExchange(data.heard, data.reply);
     history = history.slice(-12);
     addMsg('nova', data.reply);
     speak(data.reply);
