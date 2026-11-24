@@ -380,7 +380,20 @@ function unlockVoice() {
 $('log').addEventListener('click', unlockVoice);
 
 function speak(text) {
-  if (!('speechSynthesis' in window)) { setState(null, 'Tap the mic to talk'); return; }
+  // Runs once when Nova has finished talking (or couldn't talk): then listen for "confirm" if a card is waiting.
+  let finished = false;
+  const after = () => {
+    if (finished) return; finished = true;
+    clearInterval(poll); clearTimeout(cap);
+    if (pendingAction && !pendingAction.settled) setTimeout(listenForConfirm, 250);
+    else setState(null, 'Tap the mic to talk');
+  };
+  // iPhone often never fires "end" for web speech, so also watch speechSynthesis and set a time cap.
+  const cjk = (text.match(/[\u4e00-\u9fff]/g) || []).length;
+  const words = text.replace(/[\u4e00-\u9fff]/g, ' ').split(/\s+/).filter(Boolean).length;
+  const est = 1200 + cjk * 260 + words * 380;
+  let poll = null, cap = setTimeout(after, est + 2500);
+  if (!('speechSynthesis' in window)) { after(); return; }
   speechSynthesis.cancel();
   speechSynthesis.resume();
   const u = new SpeechSynthesisUtterance(text);
@@ -389,9 +402,16 @@ function speak(text) {
   if (voice) u.voice = voice;
   u.lang = rl === 'zh' ? 'zh-CN' : rl === 'ms' ? 'ms-MY' : 'en-US';
   u.rate = 1.05;
-  u.onstart = () => setState('speaking', 'Speaking — tap mic to interrupt');
-  u.onend = u.onerror = () => { if (pendingAction && !pendingAction.settled) listenForConfirm(); else setState(null, 'Tap the mic to talk'); };
+  u.onstart = () => setState('speaking', 'Speaking \u2014 tap mic to interrupt');
+  u.onend = u.onerror = after;
   speechSynthesis.speak(u);
+  const started = Date.now();
+  let quiet = 0;
+  poll = setInterval(() => {
+    if (Date.now() - started < 800) return;
+    quiet = speechSynthesis.speaking ? 0 : quiet + 1;
+    if (quiet >= 2) after();
+  }, 300);
 }
 
 // ---------- Voice in: Nova records, OpenAI transcribes (auto language) ----------
