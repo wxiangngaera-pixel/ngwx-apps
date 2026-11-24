@@ -39,6 +39,11 @@
   .me{align-self:flex-end;background:var(--line);border-radius:18px 18px 4px 18px}
   .nova{align-self:flex-start;background:var(--card);border:1px solid var(--line);border-radius:18px 18px 18px 4px}
   .err{align-self:center;color:var(--orange);font-size:13px;text-align:center}
+  .act{align-self:stretch;background:var(--card);border:1px solid var(--orange);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:10px}
+  .act .k{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--orange)}
+  .act .d{font-size:14px;line-height:1.5;white-space:pre-wrap}
+  .act .row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .act button{min-height:46px;border-radius:12px;font:inherit;font-weight:600;cursor:pointer}
   .day{align-self:center;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin:6px 0}
   .msg time{display:block;font-size:11px;color:var(--muted);margin-top:4px}
   .bar{display:flex;gap:10px;align-items:center}
@@ -308,6 +313,7 @@ async function ask(text) {
     saveExchange(text, data.reply);
     history = history.slice(-12);
     addMsg('nova', data.reply);
+    (data.actions || []).forEach(showAction);
     speak(data.reply);
   } catch (err) {
     let msg = err.message || String(err);
@@ -332,6 +338,7 @@ async function askAudio(b64, mime) {
     saveExchange(data.heard, data.reply);
     history = history.slice(-12);
     addMsg('nova', data.reply);
+    (data.actions || []).forEach(showAction);
     speak(data.reply);
   } catch (err) {
     let msg = err.message || String(err);
@@ -641,6 +648,84 @@ $('handsFree').addEventListener('click', () => setHandsFree(!handsFreeOn));
 document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState === 'visible' && handsFreeOn) { try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {} resumeWake(); }
 });
+
+// ---------- Actions on this phone / Mac (always need Boss's tap) ----------
+const ACT_LABEL = { call: 'Call', whatsapp: 'WhatsApp', sms: 'Message', email: 'Email', navigate: 'Navigate', calendar: 'Calendar event', reminder: 'Reminder' };
+function digits(p) { return String(p || '').replace(/[^\d]/g, ''); }
+function fmtWhen(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return fmtDay(d) + ', ' + d.toLocaleTimeString('en-MY', { hour: 'numeric', minute: '2-digit' });
+}
+function describe(a) {
+  const who = [a.to_name, a.to].filter(Boolean).join(' · ') || 'choose contact';
+  switch (a.type) {
+    case 'call': return 'Call ' + who;
+    case 'whatsapp': return 'WhatsApp ' + who + (a.text ? '\n“' + a.text + '”' : '');
+    case 'sms': return 'Message ' + who + (a.text ? '\n“' + a.text + '”' : '');
+    case 'email': return 'Email ' + who + (a.subject ? '\nSubject: ' + a.subject : '') + (a.text ? '\n“' + a.text + '”' : '');
+    case 'navigate': return 'Directions to ' + (a.place || '?') + ' (' + ({ google: 'Google Maps', apple: 'Apple Maps' }[a.app] || 'Waze') + ')';
+    case 'calendar': return (a.title || 'Event') + '\n' + fmtWhen(a.start) + (a.place ? '\n' + a.place : '');
+    case 'reminder': return (a.text || a.title || 'Reminder') + (a.start ? '\n' + fmtWhen(a.start) : '');
+  }
+  return JSON.stringify(a);
+}
+function icsTime(iso) { return new Date(iso).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z'); }
+function icsEsc(t) { return String(t || '').replace(/[\\,;]/g, (m) => '\\' + m).replace(/\n/g, '\\n'); }
+function runAction(a) {
+  const enc = encodeURIComponent;
+  switch (a.type) {
+    case 'call': location.href = 'tel:' + (a.to ? '+' + digits(a.to) : ''); return;
+    case 'whatsapp': location.href = 'https://wa.me/' + digits(a.to) + (a.text ? '?text=' + enc(a.text) : ''); return;
+    case 'sms': location.href = 'sms:' + (a.to ? '+' + digits(a.to) : '') + (a.text ? '&body=' + enc(a.text) : ''); return;
+    case 'email': location.href = 'mailto:' + (a.to || '') + '?subject=' + enc(a.subject || '') + '&body=' + enc(a.text || ''); return;
+    case 'navigate': {
+      const q = enc(a.place || '');
+      location.href = a.app === 'google' ? 'https://www.google.com/maps/dir/?api=1&destination=' + q
+        : a.app === 'apple' ? 'https://maps.apple.com/?daddr=' + q
+        : 'https://waze.com/ul?q=' + q + '&navigate=yes';
+      return;
+    }
+    case 'calendar': {
+      const start = a.start || new Date().toISOString();
+      const end = a.end || new Date(new Date(start).getTime() + 3600000).toISOString();
+      const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Nova//EN', 'BEGIN:VEVENT',
+        'UID:' + Date.now() + '@nova', 'DTSTAMP:' + icsTime(new Date().toISOString()),
+        'DTSTART:' + icsTime(start), 'DTEND:' + icsTime(end), 'SUMMARY:' + icsEsc(a.title || 'Event'),
+        a.place ? 'LOCATION:' + icsEsc(a.place) : '', a.text ? 'DESCRIPTION:' + icsEsc(a.text) : '',
+        'BEGIN:VALARM', 'TRIGGER:-PT30M', 'ACTION:DISPLAY', 'DESCRIPTION:Reminder', 'END:VALARM',
+        'END:VEVENT', 'END:VCALENDAR'].filter(Boolean).join('\r\n');
+      const url = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }));
+      const link = document.createElement('a'); link.href = url; link.download = 'nova-event.ics';
+      document.body.appendChild(link); link.click(); link.remove();
+      return;
+    }
+    case 'reminder': {
+      // Runs Boss's "Nova Reminder" shortcut with "text|ISO time".
+      const payload = (a.text || a.title || 'Reminder') + '|' + (a.start || '');
+      location.href = 'shortcuts://run-shortcut?name=' + enc('Nova Reminder') + '&input=text&text=' + enc(payload);
+      return;
+    }
+  }
+}
+function showAction(a) {
+  const card = document.createElement('div');
+  card.className = 'act';
+  const k = document.createElement('div'); k.className = 'k'; k.textContent = (ACT_LABEL[a.type] || 'Action') + ' — tap to confirm';
+  const d = document.createElement('div'); d.className = 'd'; d.textContent = describe(a);
+  const row = document.createElement('div'); row.className = 'row';
+  const no = document.createElement('button'); no.type = 'button'; no.textContent = 'Cancel';
+  no.style.cssText = 'background:none;border:1px solid var(--line);color:var(--text)';
+  const yes = document.createElement('button'); yes.type = 'button'; yes.textContent = 'Confirm';
+  yes.style.cssText = 'background:var(--orange);border:0;color:#fff';
+  const done = (txt) => { row.remove(); k.textContent = txt; card.style.borderColor = 'var(--line)'; };
+  no.addEventListener('click', () => done('Cancelled'));
+  yes.addEventListener('click', () => { done('Confirmed — opened on this device'); runAction(a); });
+  row.append(no, yes);
+  card.append(k, d, row);
+  $('log').appendChild(card);
+  card.scrollIntoView({ behavior: 'smooth', block: 'end' });
+}
 
 $('typeForm').addEventListener('submit', (e) => {
   e.preventDefault();
