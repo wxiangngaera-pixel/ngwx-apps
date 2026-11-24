@@ -701,9 +701,10 @@ function runAction(a) {
       return;
     }
     case 'reminder': {
-      // Runs Boss's "Nova Reminder" shortcut with "text|ISO time".
-      const payload = (a.text || a.title || 'Reminder') + '|' + (a.start || '');
-      location.href = 'shortcuts://run-shortcut?name=' + enc('Nova Reminder') + '&input=text&text=' + enc(payload);
+      // Runs Boss's "NOVA Reminder" shortcut: line 1 = reminder text, line 2 = alert time.
+      const when = a.start ? new Date(a.start).toLocaleString('en-US', { timeZone: 'Asia/Kuala_Lumpur', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+      const payload = (a.text || a.title || 'Reminder') + '\n' + when;
+      location.href = 'shortcuts://run-shortcut?name=' + enc('NOVA Reminder') + '&input=text&text=' + enc(payload);
       return;
     }
   }
