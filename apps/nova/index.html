@@ -735,7 +735,7 @@ function showAction(a) {
   const yes = document.createElement('button'); yes.type = 'button'; yes.textContent = 'Confirm';
   yes.style.cssText = 'background:var(--orange);border:0;color:#fff';
   const done = (txt) => { row.remove(); k.textContent = txt; card.style.borderColor = 'var(--line)'; };
-  const entry = { a, done, settled: false };
+  const entry = { a, done, card, settled: false };
   entry.cancel = () => { if (entry.settled) return; entry.settled = true; done('Cancelled'); };
   entry.confirm = () => { if (entry.settled) return; entry.settled = true; done('Confirmed \u2014 opened on this device'); runAction(a); };
   no.addEventListener('click', () => { entry.cancel(); pendingAction = null; });
@@ -770,7 +770,21 @@ async function handleConfirmAudio(blob, type) {
   } catch { setState(null, 'Tap Confirm or Cancel'); return; }
   if (heard) addMsg('me', heard);
   if (NO.test(heard)) { entry.cancel(); pendingAction = null; speak('Okay Boss, cancelled.'); return; }
-  if (YES.test(heard)) { entry.confirm(); pendingAction = null; setState(null, 'Done — opened on this device'); return; }
+  if (YES.test(heard)) {
+    pendingAction = null;
+    entry.settled = true;
+    entry.done('Confirmed by voice');
+    const go = document.createElement('button');
+    go.type = 'button'; go.className = 'btn';
+    go.style.cssText = 'width:100%;background:var(--orange);margin-top:2px';
+    go.textContent = 'Open ' + (ACT_LABEL[entry.a.type] || 'it') + ' now';
+    go.addEventListener('click', () => { runAction(entry.a); go.remove(); });
+    entry.card.appendChild(go);
+    go.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    try { runAction(entry.a); } catch {}
+    setState(null, 'Confirmed \u2014 tap the orange button if it didn\u2019t open');
+    return;
+  }
   setState(null, 'Didn’t catch that — tap Confirm or Cancel');
 }
 
