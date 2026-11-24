@@ -679,7 +679,7 @@ function describe(a) {
   const who = [a.to_name, a.to].filter(Boolean).join(' · ') || 'choose contact';
   switch (a.type) {
     case 'call': return 'Call ' + who;
-    case 'whatsapp': return 'WhatsApp ' + who + (a.text ? '\n“' + a.text + '”' : '');
+    case 'whatsapp': return 'WhatsApp ' + who + (a.to ? (a.from === 'business' ? '\nFrom: Alphas number (016-808 9183)' : '\nFrom: your WhatsApp') + ' — Nova sends it' : '\nOpens WhatsApp to pick the chat') + (a.text ? '\n“' + a.text + '”' : '');
     case 'sms': return 'Message ' + who + (a.text ? '\n“' + a.text + '”' : '');
     case 'email': return 'Email ' + who + (a.subject ? '\nSubject: ' + a.subject : '') + (a.text ? '\n“' + a.text + '”' : '');
     case 'navigate': return 'Directions to ' + (a.place || '?') + ' (' + ({ google: 'Google Maps', apple: 'Apple Maps' }[a.app] || 'Waze') + ')';
@@ -724,6 +724,30 @@ function runAction(a) {
     }
   }
 }
+// WhatsApp with a number: Nova sends it itself (no phone app), after Boss confirms.
+function sentByNova(a) { return a.type === 'whatsapp' && !!a.to && !!a.text; }
+async function sendByNova(entry) {
+  const a = entry.a;
+  entry.done('Sending\u2026');
+  try {
+    const { data, error } = await sb.functions.invoke('nova-brain', { body: { mode: 'execute', action: a } });
+    if (error) { let m = error.message; try { const b = await error.context?.json(); if (b?.error) m = b.error; } catch {} throw new Error(m); }
+    if (data.error) throw new Error(data.error);
+    const from = data.from === 'business' ? 'the Alphas number' : 'your WhatsApp';
+    if (data.status === 'sent') { entry.done('Sent \u2713 from ' + from); speak('Sent, Boss.'); }
+    else if (data.status === 'failed') throw new Error(data.error || 'WhatsApp could not send it');
+    else { entry.done('Queued \u2014 sending from ' + from + ' shortly'); speak('Queued, Boss. It will go out shortly.'); }
+  } catch (e) {
+    entry.done('Not sent: ' + (e.message || e));
+    const go = document.createElement('button');
+    go.type = 'button'; go.className = 'btn';
+    go.style.cssText = 'width:100%;background:var(--orange);margin-top:2px';
+    go.textContent = 'Open WhatsApp instead';
+    go.addEventListener('click', () => { runAction(a); go.remove(); });
+    entry.card.appendChild(go);
+    speak('Sorry Boss, it did not send. Tap to open WhatsApp instead.');
+  }
+}
 function showAction(a) {
   const card = document.createElement('div');
   card.className = 'act';
@@ -737,7 +761,7 @@ function showAction(a) {
   const done = (txt) => { row.remove(); k.textContent = txt; card.style.borderColor = 'var(--line)'; };
   const entry = { a, done, card, settled: false };
   entry.cancel = () => { if (entry.settled) return; entry.settled = true; done('Cancelled'); };
-  entry.confirm = () => { if (entry.settled) return; entry.settled = true; done('Confirmed \u2014 opened on this device'); runAction(a); };
+  entry.confirm = () => { if (entry.settled) return; entry.settled = true; if (sentByNova(a)) { sendByNova(entry); return; } done('Confirmed \u2014 opened on this device'); runAction(a); };
   no.addEventListener('click', () => { entry.cancel(); pendingAction = null; });
   yes.addEventListener('click', () => { entry.confirm(); pendingAction = null; });
   pendingAction = entry;
@@ -770,6 +794,7 @@ async function handleConfirmAudio(blob, type) {
   } catch { setState(null, 'Tap Confirm or Cancel'); return; }
   if (heard) addMsg('me', heard);
   if (NO.test(heard)) { entry.cancel(); pendingAction = null; speak('Okay Boss, cancelled.'); return; }
+  if (YES.test(heard) && sentByNova(entry.a)) { pendingAction = null; entry.settled = true; sendByNova(entry); return; }
   if (YES.test(heard)) {
     pendingAction = null;
     entry.settled = true;
