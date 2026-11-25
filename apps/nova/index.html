@@ -138,7 +138,7 @@
       <button class="send" type="submit" aria-label="Send">→</button>
     </form>
     <div class="center" style="gap:18px;align-items:center">
-      <button class="send" type="button" id="handsFree" aria-pressed="false" style="min-width:auto;padding:0 14px;font-size:13px">Hands-free: off</button>
+      <button class="send" type="button" id="handsFree" aria-pressed="false" style="min-width:auto;padding:0 14px;font-size:13px">Listening: off</button>
       <button class="mic" id="mic" aria-label="Talk to Nova">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/></svg>
       </button>
@@ -195,6 +195,7 @@ $('signout').addEventListener('click', () => { historyLoaded = false; oldestAt =
 
 // ---------- Conversation ----------
 function setState(s, text) {
+  if (!s && typeof alwaysOn !== 'undefined' && alwaysOn) setTimeout(() => listenForFollowUp(), 600);
   if (!s && typeof handsFreeOn !== 'undefined' && handsFreeOn) setTimeout(() => resumeWake(), 400);
   app.classList.remove('listening', 'thinking', 'speaking');
   if (s) app.classList.add(s);
@@ -404,6 +405,8 @@ function speak(text) {
   const words = text.replace(/[\u4e00-\u9fff]/g, ' ').split(/\s+/).filter(Boolean).length;
   const est = 1200 + cjk * 260 + words * 380;
   let poll = null, cap = setTimeout(after, est + 2500);
+  // Don't record Nova's own voice: drop any open listening while it talks.
+  if (recording && recordTarget === 'followup') { lastHeardSpeech = false; stopRecording(); }
   if (!('speechSynthesis' in window)) { after(); return; }
   speechSynthesis.cancel();
   speechSynthesis.resume();
@@ -485,7 +488,7 @@ async function startRecording() {
   if (recordTarget === 'wake' || recordTarget === 'confirm' || recordTarget === 'followup') watchSilence(micStream);
   if (recordTarget === 'enroll') { $('enrollRec').style.background = 'var(--orange)'; $('enrollMsg').textContent = 'Recording\u2026 read the text, then tap to stop'; }
   else if (recordTarget === 'confirm') setState('listening', 'Say \u201cconfirm\u201d or \u201ccancel\u201d');
-  else if (recordTarget === 'followup') setState('listening', 'Conversation open \u2014 just talk (' + Math.max(1, Math.ceil((conversationUntil - Date.now()) / 60000)) + ' min left)');
+  else if (recordTarget === 'followup') setState('listening', 'Listening \u2014 just talk to me');
   else if (recordTarget === 'wake') setState('listening', 'Yes Boss? I\u2019m listening\u2026');
   else setState('listening', 'Recording\u2026 tap the mic when done');
   stopTimer = setTimeout(() => { if (recording) stopRecording(); }, 45000);
@@ -705,24 +708,28 @@ async function onWake() {
   startRecording();
 }
 // Stop recording by itself once Boss stops talking.
+let levelAC = null;
 function watchSilence(stream) {
   const AC = window.AudioContext || window.webkitAudioContext;
-  const ac = new AC(), an = ac.createAnalyser();
-  ac.createMediaStreamSource(stream).connect(an);
+  if (!levelAC) levelAC = new AC();
+  levelAC.resume().catch(() => {});
+  const ac = levelAC, an = ac.createAnalyser();
+  const srcNode = ac.createMediaStreamSource(stream); srcNode.connect(an);
+  const close = () => { try { srcNode.disconnect(); } catch {} };
   an.fftSize = 1024;
   const data = new Uint8Array(an.fftSize);
   let heardSpeech = false, quietSince = Date.now(), started = Date.now();
   lastHeardSpeech = false;
   const noSpeechLimit = recordTarget === 'followup' ? 8000 : 6000;
   const t = setInterval(() => {
-    if (!recording) { clearInterval(t); ac.close(); return; }
+    if (!recording) { clearInterval(t); close(); return; }
     an.getByteTimeDomainData(data);
     let sum = 0; for (const v of data) { const x = (v - 128) / 128; sum += x * x; }
     const loud = Math.sqrt(sum / data.length) > 0.04;
     if (loud) { heardSpeech = true; lastHeardSpeech = true; quietSince = Date.now(); }
     const quietFor = Date.now() - quietSince;
     if ((heardSpeech && quietFor > 1300) || (!heardSpeech && Date.now() - started > noSpeechLimit) || Date.now() - started > 30000) {
-      clearInterval(t); ac.close(); stopRecording(); unlockVoice();
+      clearInterval(t); close(); stopRecording(); unlockVoice();
     }
   }, 100);
 }
@@ -745,7 +752,7 @@ async function setHandsFree(on) {
     setState(null, 'Tap the mic to talk');
   }
 }
-$('handsFree').addEventListener('click', () => setHandsFree(!handsFreeOn));
+$('handsFree').addEventListener('click', () => setAlwaysListening(!alwaysOn));
 document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState === 'visible' && handsFreeOn) { try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {} resumeWake(); }
 });
@@ -949,24 +956,63 @@ $('vcfFile').addEventListener('change', async (e) => {
 });
 
 // ---------- Conversation mode: after Nova answers, listen briefly for Boss's reply ----------
-const CONVERSATION_MS = 5 * 60 * 1000;
+const FOREVER = 8.64e15;
 let conversationOn = true, followUpBlocked = false, lastHeardSpeech = false, conversationUntil = 0, convWakeLock = null;
 try { conversationOn = localStorage.getItem('novaConversation') !== 'off'; } catch {}
 async function openConversation() {
-  conversationUntil = Date.now() + CONVERSATION_MS;
+  if (!alwaysOn) return;
+  conversationUntil = FOREVER;
   try { if (!convWakeLock) convWakeLock = await navigator.wakeLock?.request('screen'); } catch {}
 }
 function endConversation() {
+  if (alwaysOn) { conversationUntil = FOREVER; setTimeout(listenForFollowUp, 500); return; }
   conversationUntil = 0;
   try { convWakeLock?.release(); } catch {}
   convWakeLock = null;
   setState(null, handsFreeOn ? 'Say \u201c' + wakeLabel + '\u201d to talk' : 'Tap the mic to talk');
 }
+let followStarting = false;
 function listenForFollowUp() {
-  if (!conversationOn || recording || busy) return;
+  if (!conversationOn || recording || busy || followStarting) return;
+  if (pendingAction && !pendingAction.settled) return;
+  if ('speechSynthesis' in window && speechSynthesis.speaking) return;
   if (!conversationUntil || Date.now() >= conversationUntil) { if (conversationUntil) endConversation(); return; }
   recordTarget = 'followup';
-  startRecording();
+  followStarting = true;
+  startRecording().finally(() => { followStarting = false; });
+}
+
+// ---------- Always listening: Nova keeps the mic open and answers only when spoken to ----------
+let alwaysOn = false;
+try { alwaysOn = localStorage.getItem('novaAlways') === 'on'; } catch {}
+function paintListening() {
+  const b = $('handsFree');
+  b.textContent = alwaysOn ? 'Listening: on' : 'Listening: off';
+  b.setAttribute('aria-pressed', String(alwaysOn));
+  b.style.color = alwaysOn ? 'var(--orange)' : '';
+  b.style.borderColor = alwaysOn ? 'var(--orange)' : '';
+}
+async function setAlwaysListening(on) {
+  alwaysOn = on;
+  try { localStorage.setItem('novaAlways', on ? 'on' : 'off'); } catch {}
+  paintListening();
+  if (on) {
+    unlockVoice();
+    try { const AC = window.AudioContext || window.webkitAudioContext; if (!levelAC) levelAC = new AC(); await levelAC.resume(); } catch {}
+    try { await getMic(); } catch { setState(null, 'Mic blocked \u2014 allow microphone access for Nova'); return; }
+    await openConversation();
+    if (!recording && !busy) listenForFollowUp();
+  } else {
+    if (recording && recordTarget === 'followup') { lastHeardSpeech = false; conversationUntil = 0; stopRecording(); }
+    endConversation();
+  }
+}
+paintListening();
+// iPhone needs one tap before the mic can run in the background of the page.
+if (alwaysOn) {
+  setTimeout(() => { if (!recording) setState(null, 'Tap anywhere to start listening'); }, 600);
+  const kick = () => { document.removeEventListener('click', kick, true); setAlwaysListening(true); };
+  document.addEventListener('click', kick, true);
 }
 
 $('typeForm').addEventListener('submit', (e) => {
