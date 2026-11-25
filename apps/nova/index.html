@@ -206,7 +206,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261125-2120';
+const NOVA_BUILD = 'b20261125-2140';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1310,7 +1310,31 @@ function showAction(a, q) {
   yes.addEventListener('click', () => { entry.confirm(); pendingAction = null; });
   pendingAction = entry;
   row.append(no, yes);
-  card.append(k, d, row);
+  card.append(k, d);
+  if (a.type === 'voice' && a.text) {
+    // Listen before sending: plays the same words in the same voice. Nothing is sent. (~RM 0.10 per new listen; replays are free)
+    const ls = document.createElement('button'); ls.type = 'button'; ls.textContent = '\u25B6 Listen first';
+    ls.style.cssText = 'min-height:44px;border-radius:12px;border:1px solid var(--ring2);background:none;color:var(--purple-text);font:inherit;font-weight:600;cursor:pointer';
+    let au = null, usedVoice = '';
+    ls.addEventListener('click', async () => {
+      const v = localStorage.getItem('novaLiveVoice') || 'marin';
+      if (au && !au.paused) { au.pause(); ls.textContent = '\u25B6 Play again'; return; }
+      if (!au || usedVoice !== v) {
+        ls.textContent = 'Making it\u2026 (about 10 seconds)'; ls.disabled = true;
+        try {
+          const j = await brainCall({ mode: 'voice_preview', message: a.text, voice: v });
+          au = new Audio('data:' + j.mime + ';base64,' + j.audio); au.setAttribute('playsinline', ''); usedVoice = v;
+          au.onended = () => { ls.textContent = '\u25B6 Play again'; };
+          dbg('voice preview ok ' + v);
+        } catch (e) { ls.disabled = false; ls.textContent = '\u25B6 Listen first'; addMsg('err', 'Couldn\u2019t play it: ' + (e.message || e)); return; }
+        ls.disabled = false;
+      }
+      try { speechSynthesis.cancel(); } catch {}
+      au.currentTime = 0; au.play(); ls.textContent = '\u23F8 Pause (' + v.charAt(0).toUpperCase() + v.slice(1) + ')';
+    });
+    card.append(ls);
+  }
+  card.append(row);
   $('log').appendChild(card);
   card.scrollIntoView({ behavior: 'smooth', block: 'end' });
 }
