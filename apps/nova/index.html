@@ -728,7 +728,7 @@ function watchSilence(stream) {
     const loud = Math.sqrt(sum / data.length) > 0.04;
     if (loud) { heardSpeech = true; lastHeardSpeech = true; quietSince = Date.now(); }
     const quietFor = Date.now() - quietSince;
-    if ((heardSpeech && quietFor > 1300) || (!heardSpeech && Date.now() - started > noSpeechLimit) || Date.now() - started > 30000) {
+    if ((heardSpeech && quietFor > 1000) || (!heardSpeech && Date.now() - started > noSpeechLimit) || Date.now() - started > (recordTarget === 'followup' ? 15000 : 30000)) {
       clearInterval(t); close(); stopRecording(); unlockVoice();
     }
   }, 100);
@@ -753,6 +753,10 @@ async function setHandsFree(on) {
   }
 }
 $('handsFree').addEventListener('click', () => setAlwaysListening(!alwaysOn));
+// Keep Nova's brain warm while the app is open (a cold start adds ~2-3 s to the first reply). Free: no AI is called.
+function pingBrain() { if (document.visibilityState === 'visible' && typeof sb !== 'undefined') sb.functions.invoke('nova-brain', { body: { ping: true } }).catch(() => {}); }
+setInterval(pingBrain, 60000); setTimeout(pingBrain, 3000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') pingBrain(); });
 document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState === 'visible' && handsFreeOn) { try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {} resumeWake(); }
 });
