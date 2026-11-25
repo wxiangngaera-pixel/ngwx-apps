@@ -47,6 +47,22 @@
   .day{align-self:center;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin:6px 0}
   .msg time{display:block;font-size:11px;color:var(--muted);margin-top:4px}
   .bar{display:flex;gap:10px;align-items:center}
+  .clip{min-width:48px;min-height:48px;border-radius:14px;border:1px solid var(--line);background:none;color:var(--purple-text);font-size:20px;cursor:pointer}
+  .chip{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--orange);border-radius:12px;padding:8px 10px;font-size:13px}
+  .chip span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chip button{background:none;border:0;color:var(--muted);font:inherit;cursor:pointer;min-height:36px;padding:0 6px}
+  .chip .go{color:var(--orange);font-weight:600}
+  .rev{align-self:stretch;background:var(--card);border:1px solid var(--purple);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:8px;font-size:14px;line-height:1.45}
+  .rev .k{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--orange);margin-top:6px}
+  .rev .verdict{font-size:16px;font-weight:600;color:var(--purple-text)}
+  .rev ol,.rev ul{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px}
+  .rev small{color:var(--muted)}
+  .rev table{width:100%;border-collapse:collapse;font-size:13px}
+  .rev td{border-top:1px solid var(--line);padding:6px 4px;vertical-align:top}
+  .rev .tag{font-size:11px;font-weight:700;text-transform:uppercase}
+  .rev .keep{color:#4CC38A}.rev .trial{color:var(--orange)}.rev .drop{color:#FF5C5C}.rev .ask{color:var(--purple-text)}
+  .rev .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+  .rev .btns button{flex:1;min-height:44px;border-radius:12px;border:1px solid var(--ring2);background:none;color:var(--purple-text);font:inherit;font-weight:600;cursor:pointer}
   .bar input{flex:1;min-height:48px;border-radius:14px;border:1px solid var(--line);background:var(--card);color:var(--text);padding:0 14px;font:inherit;font-size:15px}
   .send{min-width:48px;min-height:48px;border-radius:14px;border:1px solid var(--ring2);background:none;color:var(--purple-text);font:inherit;font-weight:600;cursor:pointer}
   .mic{width:72px;height:72px;border-radius:50%;border:0;background:var(--purple);display:flex;align-items:center;justify-content:center;box-shadow:0 0 28px rgba(138,43,226,.55);cursor:pointer;flex:none}
@@ -145,7 +161,10 @@
       <div class="status" id="status">Tap the mic to talk</div>
     </div>
     <div class="log" id="log" aria-live="polite"></div>
+    <div class="chip" id="fileChip" hidden><span id="fileName"></span><button type="button" class="go" id="fileGo">Review</button><button type="button" id="fileX" aria-label="Remove file">✕</button></div>
     <form class="bar" id="typeForm">
+      <button class="clip" type="button" id="clipBtn" aria-label="Attach a PDF or image">📎</button>
+      <input type="file" id="fileIn" accept="application/pdf,image/png,image/jpeg,image/webp" hidden>
       <input id="typed" placeholder="Or type to Nova…" autocomplete="off" aria-label="Message to Nova">
       <button class="send" type="submit" aria-label="Send">→</button>
     </form>
@@ -187,7 +206,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261125-1240';
+const NOVA_BUILD = 'b20261125-2100';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -441,6 +460,11 @@ async function ask(text) {
 
 async function askAudio(b64, mime) {
   if (busy) return;
+  if (pendingFile) {
+    try { setState('thinking', 'Listening…'); const j = await brainCall({ mode: 'transcribe', audio: b64, mime }); reviewFile((j.heard || '').trim()); }
+    catch (err) { addMsg('err', 'Nova had a problem: ' + (err.message || err)); setState(null, 'Tap the mic to talk'); }
+    return;
+  }
   busy = true;
   setState('thinking', 'Thinking…');
   try {
@@ -1451,11 +1475,97 @@ if (alwaysOn) {
   document.addEventListener('click', kick, true);
 }
 
+// ---------- 📎 Attach + review (proposals, documents, screenshots) ----------
+let pendingFile = null; // { b64, mime, name }
+$('clipBtn').addEventListener('click', () => $('fileIn').click());
+$('fileIn').addEventListener('change', () => {
+  const f = $('fileIn').files[0]; $('fileIn').value = '';
+  if (!f) return;
+  const ok = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'].includes(f.type);
+  if (!ok) { addMsg('err', 'Please attach a PDF or an image (PNG / JPG / screenshot).'); return; }
+  if (f.size > 10 * 1024 * 1024) { addMsg('err', 'That file is over 10 MB. Try a smaller PDF or a screenshot.'); return; }
+  const rd = new FileReader();
+  rd.onload = () => {
+    pendingFile = { b64: String(rd.result).split(',')[1], mime: f.type, name: f.name };
+    $('fileName').textContent = '📎 ' + f.name; $('fileChip').hidden = false;
+    setState(null, 'Say or type “review this”, or tap Review');
+  };
+  rd.readAsDataURL(f);
+});
+$('fileX').addEventListener('click', () => { pendingFile = null; $('fileChip').hidden = true; setState(null, 'Tap the mic to talk'); });
+$('fileGo').addEventListener('click', () => { unlockVoice(); reviewFile('Nova, review this'); });
+
+function reviewText(r) {
+  const L = [];
+  L.push('Review of ' + (r.doc_title || 'the file') + (r.sender ? ' from ' + r.sender : '') + '. Verdict: ' + (r.verdict || ''));
+  (r.must_fix || []).forEach((m, i) => L.push('Must fix ' + (i + 1) + ': ' + m.issue + (m.why ? ' (' + m.why + ')' : '') + ' Fix: ' + m.fix));
+  (r.cost || []).forEach((c) => L.push('Cost: ' + c.item + ', ' + c.price + ', ' + c.recommendation + (c.note ? ' (' + c.note + ')' : '')));
+  (r.corrections || []).forEach((c) => L.push('Correction: ' + c));
+  const o = r.offer_strength || {}; L.push('Offer strength: dream outcome ' + (o.dream_outcome || '-') + '; proof ' + (o.proof || '-') + '; speed ' + (o.speed || '-') + '; effort ' + (o.effort || '-') + '; offer and CTA ' + (o.offer_cta || '-'));
+  (r.questions || []).forEach((q) => L.push('Question to send back: ' + q));
+  return L.join('\n');
+}
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function showReview(r, fname) {
+  const c = el('div', 'rev');
+  c.appendChild(el('div', 'k', 'Review · ' + fname + (r.sender ? ' · ' + r.sender : '')));
+  c.appendChild(el('div', 'verdict', r.verdict || ''));
+  if ((r.must_fix || []).length) {
+    c.appendChild(el('div', 'k', 'Must fix (' + r.must_fix.length + ')'));
+    const ol = el('ol');
+    r.must_fix.forEach((m) => { const li = el('li'); li.appendChild(el('b', '', m.issue)); li.appendChild(document.createElement('br')); if (m.why) { li.appendChild(el('small', '', m.why)); li.appendChild(document.createElement('br')); } li.appendChild(document.createTextNode('→ ' + m.fix)); ol.appendChild(li); });
+    c.appendChild(ol);
+  }
+  if ((r.cost || []).length) {
+    c.appendChild(el('div', 'k', 'Cost'));
+    const t = el('table');
+    r.cost.forEach((x) => { const tr = el('tr'); tr.appendChild(el('td', '', x.item)); tr.appendChild(el('td', '', x.price)); const td = el('td'); td.appendChild(el('span', 'tag ' + x.recommendation, x.recommendation)); if (x.note) { td.appendChild(document.createElement('br')); td.appendChild(el('small', '', x.note)); } tr.appendChild(td); t.appendChild(tr); });
+    c.appendChild(t);
+  }
+  if ((r.corrections || []).length) { c.appendChild(el('div', 'k', 'Smaller corrections')); const ul = el('ul'); r.corrections.forEach((x) => ul.appendChild(el('li', '', x))); c.appendChild(ul); }
+  const o = r.offer_strength || {};
+  if (Object.keys(o).length) { c.appendChild(el('div', 'k', 'Offer strength')); const ul = el('ul'); [['Dream outcome', o.dream_outcome], ['Proof', o.proof], ['Speed', o.speed], ['Effort', o.effort], ['Offer & CTA', o.offer_cta]].forEach(([k, v]) => { if (v) ul.appendChild(el('li', '', k + ': ' + v)); }); c.appendChild(ul); }
+  if ((r.questions || []).length) { c.appendChild(el('div', 'k', 'Questions to send back')); const ul = el('ul'); r.questions.forEach((x) => ul.appendChild(el('li', '', x))); c.appendChild(ul); }
+  const b = el('div', 'btns');
+  const d = el('button', '', 'Draft reply to ' + (r.sender || 'sender')); d.type = 'button';
+  d.onclick = () => { unlockVoice(); ask('Draft a short, polite reply to ' + (r.sender || 'the sender') + ' based on that review. Read it out, don\'t send anything.'); };
+  const cp = el('button', '', 'Copy review'); cp.type = 'button';
+  cp.onclick = () => { navigator.clipboard.writeText(reviewText(r)).then(() => { cp.textContent = 'Copied ✓'; setTimeout(() => cp.textContent = 'Copy review', 1500); }, () => {}); };
+  b.appendChild(d); b.appendChild(cp); c.appendChild(b);
+  $('log').appendChild(c);
+  c.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+async function reviewFile(text) {
+  if (!pendingFile || busy) return;
+  const f = pendingFile; busy = true;
+  pendingFile = null; $('fileChip').hidden = true;
+  const q = '📎 ' + f.name + ': ' + (text || 'review this');
+  addMsg('me', q);
+  setState('thinking', 'Reading the file… (about 20 seconds)');
+  dbg('review start ' + f.mime + ' ' + f.b64.length);
+  try {
+    const j = await brainCall({ mode: 'review', file: f.b64, mime: f.mime, name_file: f.name, message: text || 'review this' });
+    const r = j.review || {};
+    dbg('review ok');
+    showReview(r, f.name);
+    const full = reviewText(r);
+    history.push({ role: 'user', content: q }, { role: 'assistant', content: (r.spoken || '') + '\n\n' + full.slice(0, 3500) });
+    history = history.slice(-12);
+    saveExchange(q, (r.spoken || '') + '\n\n' + full);
+    talkStart(); talkSay(r.spoken || 'Boss, the review is on screen.'); talkEnd();
+  } catch (err) {
+    dbg('review error ' + (err.message || err));
+    addMsg('err', 'Nova couldn\'t review it: ' + (err.message || err));
+    setState(null, 'Tap the mic to talk');
+  } finally { busy = false; }
+}
+
 $('typeForm').addEventListener('submit', (e) => {
   e.preventDefault();
   unlockVoice();
   const t = $('typed').value.trim();
   $('typed').value = '';
+  if (pendingFile) { reviewFile(t); return; }
   ask(t);
 });
 </script>
