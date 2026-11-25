@@ -389,6 +389,7 @@ function speak(text) {
     if (finished) return; finished = true;
     clearInterval(poll); clearTimeout(cap);
     if (pendingAction && !pendingAction.settled) setTimeout(listenForConfirm, 250);
+    else if (conversationOn && !followUpBlocked) setTimeout(listenForFollowUp, 250);
     else setState(null, 'Tap the mic to talk');
   };
   // iPhone often never fires "end" for web speech, so also watch speechSynthesis and set a time cap.
@@ -458,6 +459,7 @@ async function startRecording() {
     if (blob.size < 2000) { setState(null, recordTarget === 'confirm' ? 'Tap Confirm or Cancel' : 'Too short \u2014 tap, speak, then tap again'); return; }
     if (recordTarget === 'enroll') { enrollFrom(blob); return; }
     if (recordTarget === 'confirm') { handleConfirmAudio(blob, type); return; }
+    if (recordTarget === 'followup' && !lastHeardSpeech) { setState(null, handsFreeOn ? 'Say \u201c' + wakeLabel + '\u201d to talk' : 'Tap the mic to talk'); return; }
     if (voiceProfile) {
       setState('thinking', 'Checking it\u2019s you\u2026');
       const ok = await checkVoice(blob);
@@ -469,9 +471,10 @@ async function startRecording() {
   mediaRec.start(250);
   recording = true;
   try { navigator.vibrate && navigator.vibrate(30); } catch {}
-  if (recordTarget === 'wake' || recordTarget === 'confirm') watchSilence(micStream);
+  if (recordTarget === 'wake' || recordTarget === 'confirm' || recordTarget === 'followup') watchSilence(micStream);
   if (recordTarget === 'enroll') { $('enrollRec').style.background = 'var(--orange)'; $('enrollMsg').textContent = 'Recording\u2026 read the text, then tap to stop'; }
   else if (recordTarget === 'confirm') setState('listening', 'Say \u201cconfirm\u201d or \u201ccancel\u201d');
+  else if (recordTarget === 'followup') setState('listening', 'Listening\u2026 reply, or stay quiet');
   else if (recordTarget === 'wake') setState('listening', 'Yes Boss? I\u2019m listening\u2026');
   else setState('listening', 'Recording\u2026 tap the mic when done');
   stopTimer = setTimeout(() => { if (recording) stopRecording(); }, 45000);
@@ -698,14 +701,16 @@ function watchSilence(stream) {
   an.fftSize = 1024;
   const data = new Uint8Array(an.fftSize);
   let heardSpeech = false, quietSince = Date.now(), started = Date.now();
+  lastHeardSpeech = false;
+  const noSpeechLimit = recordTarget === 'followup' ? 5000 : 6000;
   const t = setInterval(() => {
     if (!recording) { clearInterval(t); ac.close(); return; }
     an.getByteTimeDomainData(data);
     let sum = 0; for (const v of data) { const x = (v - 128) / 128; sum += x * x; }
     const loud = Math.sqrt(sum / data.length) > 0.04;
-    if (loud) { heardSpeech = true; quietSince = Date.now(); }
+    if (loud) { heardSpeech = true; lastHeardSpeech = true; quietSince = Date.now(); }
     const quietFor = Date.now() - quietSince;
-    if ((heardSpeech && quietFor > 1300) || (!heardSpeech && Date.now() - started > 6000) || Date.now() - started > 20000) {
+    if ((heardSpeech && quietFor > 1300) || (!heardSpeech && Date.now() - started > noSpeechLimit) || Date.now() - started > 20000) {
       clearInterval(t); ac.close(); stopRecording(); unlockVoice();
     }
   }, 100);
@@ -931,6 +936,15 @@ $('vcfFile').addEventListener('change', async (e) => {
     addMsg('err', 'Contacts import problem: ' + (err.message || err));
   }
 });
+
+// ---------- Conversation mode: after Nova answers, listen briefly for Boss's reply ----------
+let conversationOn = true, followUpBlocked = false, lastHeardSpeech = false;
+try { conversationOn = localStorage.getItem('novaConversation') !== 'off'; } catch {}
+function listenForFollowUp() {
+  if (!conversationOn || recording || busy) return;
+  recordTarget = 'followup';
+  startRecording();
+}
 
 $('typeForm').addEventListener('submit', (e) => {
   e.preventDefault();
