@@ -187,7 +187,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261125-1230';
+const NOVA_BUILD = 'b20261125-1240';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -596,7 +596,9 @@ async function liveStart() {
     me.audio.play().catch(() => {}); // unlock playback on this tap (iPhone)
     try { const AC = window.AudioContext || window.webkitAudioContext; if (!levelAC) levelAC = new AC(); levelAC.resume(); } catch {}
     dbg('live start ' + engine);
-    const [j, mic] = await Promise.all([brainCall({ mode: 'live_session', model: engine === 'full' ? 'full' : 'mini', history: history.slice(-12), voice: localStorage.getItem('novaLiveVoice') || 'marin' }), getMic()]);
+    const [j, mic] = await Promise.all([brainCall({ mode: 'live_session', model: engine === 'full' ? 'full' : 'mini', history: history.slice(-12), voice: localStorage.getItem('novaLiveVoice') || 'marin' }),
+      // Its own mic stream: on iPhone a shared one can be silently muted while another recorder holds it.
+      navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } })]);
     if (me.closed) return;
     const pc = new RTCPeerConnection(); me.pc = pc;
     pc.ontrack = (e) => {
@@ -612,7 +614,11 @@ async function liveStart() {
         } catch (e2) { dbg('audio engine failed: ' + e2.message); }
       });
     };
-    pc.addTrack(mic.getAudioTracks()[0], mic);
+    me.mic = mic;
+    const tr = mic.getAudioTracks()[0];
+    dbg('live mic ' + tr.readyState + ' muted=' + tr.muted + ' enabled=' + tr.enabled + ' label=' + (tr.label || '').slice(0, 40));
+    tr.onmute = () => dbg('live mic MUTED'); tr.onunmute = () => dbg('live mic unmuted'); tr.onended = () => dbg('live mic ENDED');
+    pc.addTrack(tr, mic);
     const dc = pc.createDataChannel('oai-events'); me.dc = dc;
     dc.onmessage = (e) => { try { onLive(me, JSON.parse(e.data)); } catch (err) { console.error(err); } };
     dc.onopen = () => { dbg('live open'); showEngine(); setState('listening', 'Live — just talk'); liveIdle(me); };
@@ -636,6 +642,9 @@ function liveStop(note) {
   dbg('live stop ' + (note || ''));
   me.closed = true; live = null; showEngine();
   try { me.srcNode?.disconnect(); } catch {}
+  try { me.mic?.getTracks().forEach((t) => t.stop()); } catch {}
+  // The normal mic may have been muted by the call's mic: drop it so the next listen opens a fresh one.
+  if (warmMic) { try { warmMic.getTracks().forEach((t) => t.stop()); } catch {} warmMic = null; }
   clearTimeout(me.idle);
   try { me.dc?.close(); } catch {}
   try { me.pc?.getSenders().forEach((s) => { try { me.pc.removeTrack(s); } catch {} }); me.pc?.close(); } catch {}
@@ -845,7 +854,9 @@ function pickMime() {
 let warmMic = null, micReleaseTimer = null;
 async function getMic() {
   clearTimeout(micReleaseTimer);
-  if (warmMic && warmMic.getAudioTracks().some((t) => t.readyState === 'live')) return warmMic;
+  // Reuse the warm mic only if it is really live and not muted (iPhone mutes it when another mic stream opens).
+  if (warmMic && warmMic.getAudioTracks().some((t) => t.readyState === 'live' && !t.muted)) return warmMic;
+  if (warmMic) { try { warmMic.getTracks().forEach((t) => t.stop()); } catch {} warmMic = null; }
   warmMic = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
   });
