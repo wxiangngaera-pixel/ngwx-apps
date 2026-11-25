@@ -142,6 +142,7 @@
       <button class="mic" id="mic" aria-label="Talk to Nova">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/></svg>
       </button>
+      <button class="send" type="button" id="engine" style="min-width:auto;padding:0 14px;font-size:13px">Voice: Standard</button>
     </div>
   </section>
 </div>
@@ -444,6 +445,7 @@ function talkAfter(me) {
   clearInterval(me.poll); clearTimeout(me.cap);
   if (talk === me) talk = null;
   if (pendingAction && !pendingAction.settled) setTimeout(listenForConfirm, 250);
+  else if (engine !== 'std' && alwaysOn && !live) setTimeout(liveStart, 250);  // live voice picks up the follow-up
   else if (conversationOn && !followUpBlocked) setTimeout(listenForFollowUp, 250);
   else setState(null, 'Tap the mic to talk');
 }
@@ -484,8 +486,147 @@ function talkEnd() {
   if (!('speechSynthesis' in window)) { talkAfter(me); return; }
   me.cap = setTimeout(() => talkAfter(me), Math.max(500, me.started + estSpeech(me.text) + 2500 - Date.now()));
 }
-function speak(text) { talkStart(); talkSay(text); talkEnd(); }
+function speak(text) { if (live) return; talkStart(); talkSay(text); talkEnd(); }  // in a live call, the live voice does the talking
 
+
+// ---------- Live voice (OpenAI realtime): Nova hears and talks back with almost no delay ----------
+// Engine: 'std' (normal Nova), 'mini' or 'full' (live voice). Switch with the Voice button; remembered on this device.
+let engine = ['std', 'mini', 'full'].includes(localStorage.getItem('novaEngine')) ? localStorage.getItem('novaEngine') : 'std';
+let live = null;
+const ENGINE_LABEL = { std: 'Voice: Standard', mini: 'Voice: Live mini', full: 'Voice: Live full' };
+const LIVE_IDLE_MS = 90000; // hang up after 90 s with nobody talking (saves money)
+function showEngine() {
+  const b = $('engine'); b.textContent = ENGINE_LABEL[engine];
+  const on = engine !== 'std';
+  b.style.color = on ? 'var(--orange)' : ''; b.style.borderColor = on ? 'var(--orange)' : '';
+}
+$('engine').addEventListener('click', () => {
+  if (live) liveStop();
+  engine = engine === 'std' ? 'mini' : engine === 'mini' ? 'full' : 'std';
+  localStorage.setItem('novaEngine', engine);
+  showEngine();
+  setState(null, engine === 'std' ? 'Tap the mic to talk' : 'Tap the mic to start a live call');
+});
+showEngine();
+
+async function brainCall(body) {
+  const { data: { session } } = await sb.auth.getSession();
+  const r = await fetch(SUPABASE_URL + '/functions/v1/nova-brain', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: SUPABASE_KEY, Authorization: 'Bearer ' + (session?.access_token || SUPABASE_KEY) },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) throw new Error(j.error || 'HTTP ' + r.status);
+  return j;
+}
+function saveOne(role, content) { if (content) sb.from('nova_messages').insert({ role, content }).then(() => {}); }
+
+async function liveStart() {
+  if (live || engine === 'std') return;
+  const me = { pc: null, dc: null, audio: null, idle: null, bubbles: {}, heard: {}, lastItem: null, closed: false, model: engine };
+  live = me;
+  setState('thinking', 'Connecting live…');
+  try {
+    me.audio = document.createElement('audio'); me.audio.autoplay = true; me.audio.setAttribute('playsinline', '');
+    document.body.appendChild(me.audio);
+    me.audio.play().catch(() => {}); // unlock playback on this tap (iPhone)
+    const [j, mic] = await Promise.all([brainCall({ mode: 'live_session', model: engine === 'full' ? 'full' : 'mini', history: history.slice(-12) }), getMic()]);
+    if (me.closed) return;
+    const pc = new RTCPeerConnection(); me.pc = pc;
+    pc.ontrack = (e) => { me.audio.srcObject = e.streams[0]; me.audio.play().catch(() => {}); };
+    pc.addTrack(mic.getAudioTracks()[0], mic);
+    const dc = pc.createDataChannel('oai-events'); me.dc = dc;
+    dc.onmessage = (e) => { try { onLive(me, JSON.parse(e.data)); } catch (err) { console.error(err); } };
+    dc.onopen = () => { setState('listening', 'Live — just talk'); liveIdle(me); };
+    pc.onconnectionstatechange = () => { if (['failed', 'closed', 'disconnected'].includes(pc.connectionState) && !me.closed) liveStop('Live call dropped'); };
+    const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
+    const r = await fetch('https://api.openai.com/v1/realtime/calls', {
+      method: 'POST', body: offer.sdp, headers: { Authorization: 'Bearer ' + j.key, 'Content-Type': 'application/sdp' },
+    });
+    if (!r.ok) throw new Error('Live voice could not connect (' + r.status + '): ' + (await r.text()).slice(0, 200));
+    await pc.setRemoteDescription({ type: 'answer', sdp: await r.text() });
+    try { if (!convWakeLock) convWakeLock = await navigator.wakeLock?.request('screen'); } catch {}
+  } catch (err) {
+    addMsg('err', 'Live voice problem: ' + (err.message || err));
+    liveStop();
+  }
+}
+function liveStop(note) {
+  const me = live; if (!me) return;
+  me.closed = true; live = null;
+  clearTimeout(me.idle);
+  try { me.dc?.close(); } catch {}
+  try { me.pc?.getSenders().forEach((s) => { try { me.pc.removeTrack(s); } catch {} }); me.pc?.close(); } catch {}
+  try { me.audio?.pause(); me.audio?.remove(); } catch {}
+  setState(null, alwaysOn ? 'Listening — just talk to me' : 'Tap the mic to start a live call');
+  if (note) addMsg('err', note);
+  scheduleMicRelease();
+  if (alwaysOn) setTimeout(listenForFollowUp, 400);
+}
+function liveIdle(me) { clearTimeout(me.idle); me.idle = setTimeout(() => { if (live === me) liveStop('Live call ended (quiet for 90 s)'); }, LIVE_IDLE_MS); }
+function liveSend(me, ev) { if (me.dc && me.dc.readyState === 'open') me.dc.send(JSON.stringify(ev)); }
+
+async function onLive(me, ev) {
+  switch (ev.type) {
+    case 'input_audio_buffer.speech_started':
+      liveIdle(me); setState('listening', 'Live — listening'); break;
+    case 'input_audio_buffer.committed':
+      // Placeholder bubble so his words appear in the right order; filled when the transcript arrives.
+      me.lastItem = ev.item_id; me.bubbles[ev.item_id] = addMsg('me', '…'); setState('thinking', 'Live — thinking'); break;
+    case 'conversation.item.input_audio_transcription.completed': {
+      const t = (ev.transcript || '').trim(); me.heard[ev.item_id] = t;
+      const el = me.bubbles[ev.item_id];
+      if (el) { if (t) el.firstChild.nodeValue = t; else el.remove(); }
+      if (t) { history.push({ role: 'user', content: t }); history = history.slice(-12); saveOne('user', t); }
+      break;
+    }
+    case 'output_audio_buffer.started':
+      setState('speaking', 'Live — speaking (just talk to interrupt)'); break;
+    case 'output_audio_buffer.stopped':
+      liveIdle(me); setState('listening', 'Live — just talk'); break;
+    case 'response.output_audio_transcript.done': {
+      const t = (ev.transcript || '').trim();
+      if (t) { addMsg('nova', t); history.push({ role: 'assistant', content: t }); history = history.slice(-12); saveOne('assistant', t); }
+      break;
+    }
+    case 'response.done': {
+      liveIdle(me);
+      const calls = (ev.response?.output || []).filter((o) => o.type === 'function_call');
+      if (!calls.length) break;
+      for (const c of calls) {
+        let args = {}; try { args = JSON.parse(c.arguments || '{}'); } catch {}
+        let out;
+        try { out = await liveTool(me, c.name, args); } catch (err) { out = { error: String(err.message || err) }; }
+        liveSend(me, { type: 'conversation.item.create', item: { type: 'function_call_output', call_id: c.call_id, output: typeof out === 'string' ? out : JSON.stringify(out) } });
+      }
+      liveSend(me, { type: 'response.create' });
+      break;
+    }
+    case 'error':
+      console.error('live error', ev.error); addMsg('err', 'Live voice: ' + (ev.error?.message || 'error')); break;
+  }
+}
+
+// The live voice's tools. Actions never run unless Boss himself said "confirm" (or taps Confirm).
+async function liveTool(me, name, args) {
+  if (name === 'prepare_action') { showAction(args); return { ok: true, note: 'Card shown. Read it back in one short sentence and ask "Confirm?". Nothing happens until he confirms.' }; }
+  if (name === 'cancel_action') { if (pendingAction && !pendingAction.settled) pendingAction.cancel(); pendingAction = null; return { ok: true }; }
+  if (name === 'confirm_action') {
+    const entry = pendingAction;
+    if (!entry || entry.settled) return { error: 'No action is waiting.' };
+    // Check his own words, not the model's say-so: wait briefly for the transcript of what he just said.
+    const id = me.lastItem, t0 = Date.now();
+    while (id && me.heard[id] === undefined && Date.now() - t0 < 2500) await new Promise((r) => setTimeout(r, 100));
+    const said = (id && me.heard[id]) || '';
+    if (!said || NO.test(said) || !YES.test(said)) return { error: 'Boss has not clearly said confirm. Ask him to say "confirm".' };
+    pendingAction = null; entry.confirm();
+    return { ok: true, note: sentByNova(entry.a) ? 'Nova is sending it now. Say it is on the way.' : 'It is opening on his phone now.' };
+  }
+  const j = await brainCall({ mode: 'tool', name, args });
+  return j.output;
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && live) liveStop(); });
 
 // ---------- Voice in: Nova records, OpenAI transcribes (auto language) ----------
 let mediaRec = null, chunks = [], micStream = null, recording = false, stopTimer = null;
@@ -508,7 +649,7 @@ async function getMic() {
 }
 function scheduleMicRelease() {
   clearTimeout(micReleaseTimer);
-  micReleaseTimer = setTimeout(() => { if (!recording && !handsFreeOn && warmMic) { warmMic.getTracks().forEach((t) => t.stop()); warmMic = null; } }, 120000);
+  micReleaseTimer = setTimeout(() => { if (!recording && !handsFreeOn && !live && warmMic) { warmMic.getTracks().forEach((t) => t.stop()); warmMic = null; } }, 120000);
 }
 async function startRecording() {
   const mime = pickMime();
@@ -559,6 +700,11 @@ function stopRecording() {
 }
 $('mic').addEventListener('click', () => {
   if ('speechSynthesis' in window && speechSynthesis.speaking) speechSynthesis.cancel();
+  if (engine !== 'std' && !busy) {
+    if (live) liveStop('Live call ended');
+    else { if (recording) { lastHeardSpeech = false; stopRecording(); } liveStart(); }
+    return;
+  }
   if (busy) return;
   if (recording) { stopRecording(); unlockVoice(); return; }
   recordTarget = 'ask';
@@ -1035,6 +1181,7 @@ function endConversation() {
 }
 let followStarting = false;
 function listenForFollowUp() {
+  if (live) return;
   if (!conversationOn || recording || busy || followStarting) return;
   if (pendingAction && !pendingAction.settled) return;
   if ('speechSynthesis' in window && speechSynthesis.speaking) return;
