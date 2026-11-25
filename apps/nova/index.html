@@ -227,6 +227,7 @@ function addMsg(cls, text, when) {
   }
   $('log').appendChild(el);
   el.scrollIntoView({ behavior: when ? 'auto' : 'smooth', block: 'end' });
+  return el;
 }
 
 // ---------- Conversation history (saved in Supabase, only Boss can read it) ----------
@@ -304,25 +305,77 @@ function saveExchange(q, a) {
   sb.from('nova_messages').insert([{ role: 'user', content: q }, { role: 'assistant', content: a }]).then(() => {});
 }
 
+// Ask Nova and hear the answer as it's written: each sentence is spoken the moment it arrives.
+async function streamBrain(body, on) {
+  const { data: { session } } = await sb.auth.getSession();
+  const r = await fetch(SUPABASE_URL + '/functions/v1/nova-brain', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: SUPABASE_KEY, Authorization: 'Bearer ' + (session?.access_token || SUPABASE_KEY) },
+    body: JSON.stringify({ ...body, stream: true }),
+  });
+  if (!(r.headers.get('content-type') || '').includes('ndjson')) {
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.error) throw new Error(j.error || 'HTTP ' + r.status);
+    if (String(j.reply || '').includes('[[ignore]]')) return on({ t: 'ignore' });
+    if (j.heard) on({ t: 'heard', heard: j.heard });
+    (j.actions || []).forEach((a) => on({ t: 'action', action: a }));
+    if (j.reply) on({ t: 'say', text: j.reply });
+    return on({ t: 'done', reply: j.reply, heard: j.heard, actions: j.actions || [] });
+  }
+  const reader = r.body.getReader(), dec = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (line) on(JSON.parse(line));
+    }
+  }
+  if (buf.trim()) on(JSON.parse(buf));
+}
+
+async function runBrain(body, typed) {
+  let bubble = null, said = '', heard = typed || '', final = null, ignored = false;
+  try {
+    await streamBrain(body, (ev) => {
+      if (ev.t === 'heard') { heard = ev.heard; addMsg('me', ev.heard); }
+      else if (ev.t === 'say') {
+        said += (said ? ' ' : '') + ev.text;
+        if (!bubble) bubble = addMsg('nova', said);
+        else { bubble.firstChild.nodeValue = said; bubble.scrollIntoView({ block: 'end' }); }
+        talkSay(ev.text);
+      }
+      else if (ev.t === 'action') showAction(ev.action);
+      else if (ev.t === 'ignore') ignored = true;
+      else if (ev.t === 'done') final = ev;
+      else if (ev.t === 'error') throw new Error(ev.error);
+    });
+  } catch (err) {
+    if (talk) talkEnd();
+    throw err;
+  }
+  if (ignored) return 'ignored';
+  const reply = (final && final.reply) || said;
+  if (!bubble && reply) { addMsg('nova', reply); talkSay(reply); }
+  history.push({ role: 'user', content: heard }, { role: 'assistant', content: reply });
+  saveExchange(heard, reply);
+  history = history.slice(-12);
+  talkEnd();
+  return 'ok';
+}
+
 async function ask(text) {
   if (!text || busy) return;
   busy = true;
   addMsg('me', text);
   setState('thinking', 'Thinking…');
   try {
-    const { data, error } = await sb.functions.invoke('nova-brain', { body: { message: text, history } });
-    if (error) throw error;
-    if (data.error) throw new Error(data.error);
-    history.push({ role: 'user', content: text }, { role: 'assistant', content: data.reply });
-    saveExchange(text, data.reply);
-    history = history.slice(-12);
-    addMsg('nova', data.reply);
-    (data.actions || []).forEach(showAction);
-    speak(data.reply);
+    await runBrain({ message: text, history: history.slice() }, text);
   } catch (err) {
-    let msg = err.message || String(err);
-    try { const b = await err.context?.json(); if (b?.error) msg = b.error; } catch {}
-    addMsg('err', 'Nova had a problem: ' + msg);
+    addMsg('err', 'Nova had a problem: ' + (err.message || err));
     setState(null, 'Tap the mic to talk');
   } finally {
     busy = false;
@@ -332,29 +385,18 @@ async function ask(text) {
 async function askAudio(b64, mime) {
   if (busy) return;
   busy = true;
-  setState('thinking', 'Thinking\u2026');
+  setState('thinking', 'Thinking…');
   try {
-    const { data, error } = await sb.functions.invoke('nova-brain', { body: { audio: b64, mime, history, overheard: recordTarget === 'followup' } });
-    if (error) throw error;
-    if (data.error) throw new Error(data.error);
-    // Not meant for Nova (Boss talking to someone else / background): stay silent, keep listening.
-    if (String(data.reply || '').includes('[[ignore]]')) {
+    const res = await runBrain({ audio: b64, mime, history: history.slice(), overheard: recordTarget === 'followup' });
+    if (res === 'ignored') {
+      // Not meant for Nova (Boss talking to someone else / background): stay silent, keep listening.
       busy = false;
       if (conversationUntil && Date.now() < conversationUntil) listenForFollowUp();
-      else setState(null, handsFreeOn ? 'Say \u201c' + wakeLabel + '\u201d to talk' : 'Tap the mic to talk');
+      else setState(null, handsFreeOn ? 'Say “' + wakeLabel + '” to talk' : 'Tap the mic to talk');
       return;
     }
-    if (data.heard) addMsg('me', data.heard);
-    history.push({ role: 'user', content: data.heard || '' }, { role: 'assistant', content: data.reply });
-    saveExchange(data.heard, data.reply);
-    history = history.slice(-12);
-    addMsg('nova', data.reply);
-    (data.actions || []).forEach(showAction);
-    speak(data.reply);
   } catch (err) {
-    let msg = err.message || String(err);
-    try { const b = await err.context?.json(); if (b?.error) msg = b.error; } catch {}
-    addMsg('err', 'Nova had a problem: ' + msg);
+    addMsg('err', 'Nova had a problem: ' + (err.message || err));
     setState(null, 'Tap the mic to talk');
   } finally {
     busy = false;
@@ -390,44 +432,60 @@ function unlockVoice() {
 
 $('log').addEventListener('click', unlockVoice);
 
-function speak(text) {
-  // Runs once when Nova has finished talking (or couldn't talk): then listen for "confirm" if a card is waiting.
-  let finished = false;
-  const after = () => {
-    if (finished) return; finished = true;
-    clearInterval(poll); clearTimeout(cap);
-    if (pendingAction && !pendingAction.settled) setTimeout(listenForConfirm, 250);
-    else if (conversationOn && !followUpBlocked) setTimeout(listenForFollowUp, 250);
-    else setState(null, 'Tap the mic to talk');
-  };
-  // iPhone often never fires "end" for web speech, so also watch speechSynthesis and set a time cap.
-  const cjk = (text.match(/[\u4e00-\u9fff]/g) || []).length;
-  const words = text.replace(/[\u4e00-\u9fff]/g, ' ').split(/\s+/).filter(Boolean).length;
-  const est = 1200 + cjk * 260 + words * 380;
-  let poll = null, cap = setTimeout(after, est + 2500);
+// Nova's voice: sentences are queued as they arrive; "after" runs once everything has been said.
+let talk = null;
+function estSpeech(text) {
+  const cjk = (text.match(/[一-鿿]/g) || []).length;
+  const words = text.replace(/[一-鿿]/g, ' ').split(/\s+/).filter(Boolean).length;
+  return 1200 + cjk * 260 + words * 380;
+}
+function talkAfter(me) {
+  if (me.finished) return; me.finished = true;
+  clearInterval(me.poll); clearTimeout(me.cap);
+  if (talk === me) talk = null;
+  if (pendingAction && !pendingAction.settled) setTimeout(listenForConfirm, 250);
+  else if (conversationOn && !followUpBlocked) setTimeout(listenForFollowUp, 250);
+  else setState(null, 'Tap the mic to talk');
+}
+function talkStart() {
   // Don't record Nova's own voice: drop any open listening while it talks.
   if (recording && recordTarget === 'followup') { lastHeardSpeech = false; stopRecording(); }
-  if (!('speechSynthesis' in window)) { after(); return; }
+  const me = { text: '', done: false, finished: false, started: Date.now(), lastSay: Date.now(), quiet: 0, poll: null, cap: null };
+  talk = me;
+  if (!('speechSynthesis' in window)) return me;
   speechSynthesis.cancel();
   speechSynthesis.resume();
+  if (conversationOn) openConversation();
+  // iPhone often never fires "end" for web speech, so watch speechSynthesis (only once the whole answer has arrived).
+  me.poll = setInterval(() => {
+    if (!me.done || Date.now() - me.lastSay < 800) return;
+    me.quiet = speechSynthesis.speaking ? 0 : me.quiet + 1;
+    if (me.quiet >= 2) talkAfter(me);
+  }, 300);
+  return me;
+}
+function talkSay(text) {
+  const me = talk && !talk.finished ? talk : talkStart();
+  me.text += ' ' + text; me.lastSay = Date.now(); me.quiet = 0;
+  if (!('speechSynthesis' in window)) return;
   const u = new SpeechSynthesisUtterance(text);
-  const rl = replyLang(text);
+  const rl = replyLang(me.text);
   voice = pickVoice(rl);
   if (voice) u.voice = voice;
   u.lang = rl === 'zh' ? 'zh-CN' : rl === 'ms' ? 'ms-MY' : 'en-US';
   u.rate = 1.05;
-  u.onstart = () => setState('speaking', 'Speaking \u2014 tap mic to interrupt');
-  u.onend = u.onerror = after;
-  if (conversationOn) openConversation();
+  u.onstart = () => setState('speaking', 'Speaking — tap mic to interrupt');
   speechSynthesis.speak(u);
-  const started = Date.now();
-  let quiet = 0;
-  poll = setInterval(() => {
-    if (Date.now() - started < 800) return;
-    quiet = speechSynthesis.speaking ? 0 : quiet + 1;
-    if (quiet >= 2) after();
-  }, 300);
 }
+function talkEnd() {
+  const me = talk && !talk.finished ? talk : null;
+  if (!me) { talkAfter({ finished: false }); return; }
+  me.done = true;
+  if (!('speechSynthesis' in window)) { talkAfter(me); return; }
+  me.cap = setTimeout(() => talkAfter(me), Math.max(500, me.started + estSpeech(me.text) + 2500 - Date.now()));
+}
+function speak(text) { talkStart(); talkSay(text); talkEnd(); }
+
 
 // ---------- Voice in: Nova records, OpenAI transcribes (auto language) ----------
 let mediaRec = null, chunks = [], micStream = null, recording = false, stopTimer = null;
