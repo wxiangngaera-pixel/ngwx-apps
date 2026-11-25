@@ -59,6 +59,16 @@
   .btn.ghost{background:none;border:1px solid var(--line);color:var(--text)}
   .note{font-size:13px;color:var(--muted);line-height:1.5}
   [hidden]{display:none!important}
+  .vsheet{position:fixed;inset:0;background:var(--bg);z-index:50;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .vsheet .in{max-width:480px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 16px) 16px 40px}
+  .vsheet .sec{font-size:11px;letter-spacing:1.5px;color:var(--orange);margin:18px 0 8px}
+  .vgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .vcard{border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;background:var(--card);color:var(--text);font:inherit;text-align:left}
+  .vcard.on{border:1.5px solid var(--orange)}
+  .vcard small{display:block;font-size:11px;color:var(--muted)}
+  .vplay{background:none;border:0;color:var(--purple-text);font-size:18px;cursor:pointer;padding:6px;min-width:36px;min-height:36px}
+  .vrow{border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;align-items:center;gap:8px;background:var(--card)}
+  .vrow select{flex:1;min-width:0;background:var(--bg);color:var(--purple-text);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;font-size:13px}
 </style>
 </head>
 <body>
@@ -66,6 +76,7 @@
   <div class="top">
     <div class="brand">NOVA</div>
     <div style="display:flex;gap:4px;align-items:center">
+      <button class="link" id="voicePickBtn" hidden>Voice</button>
       <button class="link" id="linkWaBtn" hidden>Link WhatsApp</button>
       <button class="link" id="contactsBtn" hidden>Contacts</button>
       <input type="file" id="vcfFile" accept=".vcf,text/vcard,text/x-vcard" hidden>
@@ -148,6 +159,27 @@
   </section>
 </div>
 
+<section class="vsheet" id="voiceSheet" hidden aria-label="Nova's voice">
+  <div class="in">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div class="brand">NOVA</div>
+      <button class="link" id="voiceDone">Done</button>
+    </div>
+    <div style="font-size:20px;font-weight:600;margin-top:10px">Nova's voice</div>
+    <div class="note">Tap ▶ to hear a sample. Tap a voice to choose it.</div>
+    <div class="sec">LIVE MINI / LIVE FULL</div>
+    <div class="vgrid" id="liveVoices"></div>
+    <div class="sec">STANDARD (PHONE VOICES)</div>
+    <div style="display:flex;flex-direction:column;gap:8px" id="stdVoices"></div>
+    <div class="note" id="stdNote" style="margin-top:8px"></div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:16px">
+      <span class="note">Speed</span>
+      <input type="range" id="rateIn" min="0.8" max="1.4" step="0.05" style="flex:1;accent-color:var(--orange)">
+      <span id="rateOut" style="font-size:13px;min-width:44px;text-align:right"></span>
+    </div>
+  </div>
+</section>
+
 <script type="module">
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -155,7 +187,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261125-1145';
+const NOVA_BUILD = 'b20261125-1205';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -188,6 +220,7 @@ async function showScreen() {
   $('voiceBtn').hidden = true; // voice lock parked
   $('contactsBtn').hidden = !session;
   $('linkWaBtn').hidden = !session;
+  $('voicePickBtn').hidden = !session;
   if (session) { loadVoiceProfile(); loadHistory(); }
   if (session) {
     const h = new Date().toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', hour: 'numeric', hour12: false });
@@ -430,6 +463,8 @@ async function askAudio(b64, mime) {
 // ---------- Voice out ----------
 let voice = null;
 function pickVoice(lang) {
+  const saved = localStorage.getItem('novaVoice_' + lang);
+  if (saved) { const sv = speechSynthesis.getVoices().find((v) => v.voiceURI === saved); if (sv) return sv; }
   const vs = speechSynthesis.getVoices().map((v) => ({ v, l: v.lang.replace('_', '-') }));
   const prefs = lang === 'zh' ? ['zh-CN', 'zh-TW', 'zh-HK', 'zh'] : lang === 'ms' ? ['ms-MY', 'ms', 'id-ID'] : ['en-SG', 'en-MY', 'en-GB', 'en-AU', 'en-US'];
   for (const p of prefs) { const m = vs.find((x) => x.l === p) || vs.find((x) => x.l.startsWith(p)); if (m) return m.v; }
@@ -500,7 +535,7 @@ function talkSay(text) {
   voice = pickVoice(rl);
   if (voice) u.voice = voice;
   u.lang = rl === 'zh' ? 'zh-CN' : rl === 'ms' ? 'ms-MY' : 'en-US';
-  u.rate = 1.05;
+  u.rate = Number(localStorage.getItem('novaRate')) || 1.05;
   u.onstart = () => setState('speaking', 'Speaking — tap mic to interrupt');
   me.pending++;
   u.onend = u.onerror = () => { me.pending--; if (me.done && me.pending <= 0) setTimeout(() => talkAfter(me), 200); };
@@ -561,7 +596,7 @@ async function liveStart() {
     me.audio.play().catch(() => {}); // unlock playback on this tap (iPhone)
     try { const AC = window.AudioContext || window.webkitAudioContext; if (!levelAC) levelAC = new AC(); levelAC.resume(); } catch {}
     dbg('live start ' + engine);
-    const [j, mic] = await Promise.all([brainCall({ mode: 'live_session', model: engine === 'full' ? 'full' : 'mini', history: history.slice(-12) }), getMic()]);
+    const [j, mic] = await Promise.all([brainCall({ mode: 'live_session', model: engine === 'full' ? 'full' : 'mini', history: history.slice(-12), voice: localStorage.getItem('novaLiveVoice') || 'marin' }), getMic()]);
     if (me.closed) return;
     const pc = new RTCPeerConnection(); me.pc = pc;
     pc.ontrack = (e) => {
@@ -724,6 +759,78 @@ $('linkWaBtn').addEventListener('click', async () => {
     } catch (e) { dbg('link poll ' + (e.message || e)); }
   }, 2000);
 });
+
+// ---------- Voice screen: choose Nova's live voice, phone voices per language, and speed ----------
+const LIVE_VOICE_LIST = [
+  ['marin', 'warm · female'], ['cedar', 'calm · male'], ['coral', 'bright · female'], ['ash', 'clear · male'], ['sage', 'soft · female'],
+  ['verse', 'lively · male'], ['alloy', 'neutral'], ['ballad', 'gentle · male'], ['echo', 'deep · male'], ['shimmer', 'light · female'],
+];
+const sampleCache = {};
+let sampleAudio = null;
+async function playLiveSample(v, btn) {
+  try {
+    btn.textContent = '…';
+    if (!sampleCache[v]) { const j = await brainCall({ mode: 'voice_sample', voice: v }); sampleCache[v] = 'data:' + (j.mime || 'audio/mpeg') + ';base64,' + j.audio; }
+    if (sampleAudio) sampleAudio.pause();
+    sampleAudio = new Audio(sampleCache[v]);
+    await sampleAudio.play();
+  } catch (e) { addMsg('err', 'Voice sample: ' + (e.message || e)); }
+  finally { btn.textContent = '▶'; }
+}
+function renderLiveVoices() {
+  const cur = localStorage.getItem('novaLiveVoice') || 'marin';
+  const box = $('liveVoices'); box.textContent = '';
+  for (const [v, desc] of LIVE_VOICE_LIST) {
+    const c = document.createElement('div'); c.className = 'vcard' + (v === cur ? ' on' : ''); c.setAttribute('role', 'button'); c.tabIndex = 0;
+    const name = v[0].toUpperCase() + v.slice(1);
+    const t = document.createElement('span'); t.innerHTML = '';
+    t.append(name + (v === cur ? ' ' : ''));
+    if (v === cur) { const ok = document.createElement('span'); ok.style.cssText = 'font-size:11px;color:var(--orange)'; ok.textContent = '✓ chosen'; t.append(ok); }
+    const sm = document.createElement('small'); sm.textContent = desc; t.append(sm);
+    const play = document.createElement('button'); play.type = 'button'; play.className = 'vplay'; play.textContent = '▶'; play.setAttribute('aria-label', 'Play ' + name);
+    play.addEventListener('click', (e) => { e.stopPropagation(); playLiveSample(v, play); });
+    c.addEventListener('click', () => { localStorage.setItem('novaLiveVoice', v); dbg('live voice ' + v); renderLiveVoices(); });
+    c.append(t, play); box.append(c);
+  }
+}
+const STD_LANGS = [['en', 'English', 'Hi Boss, tomorrow you have three AERA orders.'], ['zh', '中文', '老板，明天有三个AERA订单。'], ['ms', 'Malay', 'Bos, esok ada tiga tempahan AERA.']];
+function renderStdVoices() {
+  const all = speechSynthesis.getVoices();
+  const box = $('stdVoices'); box.textContent = '';
+  let missing = [];
+  for (const [lang, label, sample] of STD_LANGS) {
+    const pre = lang === 'zh' ? ['zh'] : lang === 'ms' ? ['ms', 'id'] : ['en'];
+    const list = all.filter((v) => pre.some((p) => v.lang.toLowerCase().replace('_', '-').startsWith(p)));
+    const row = document.createElement('div'); row.className = 'vrow';
+    const l = document.createElement('span'); l.style.cssText = 'min-width:58px;font-size:14px'; l.textContent = label;
+    const sel = document.createElement('select'); sel.setAttribute('aria-label', label + ' voice');
+    const auto = document.createElement('option'); auto.value = ''; auto.textContent = 'Automatic'; sel.append(auto);
+    for (const v of list) { const o = document.createElement('option'); o.value = v.voiceURI; o.textContent = v.name + ' (' + v.lang + ')'; sel.append(o); }
+    sel.value = localStorage.getItem('novaVoice_' + lang) || '';
+    if (sel.value && sel.selectedIndex < 0) sel.value = '';
+    sel.addEventListener('change', () => { if (sel.value) localStorage.setItem('novaVoice_' + lang, sel.value); else localStorage.removeItem('novaVoice_' + lang); });
+    const play = document.createElement('button'); play.type = 'button'; play.className = 'vplay'; play.textContent = '▶'; play.setAttribute('aria-label', 'Play ' + label);
+    play.addEventListener('click', () => {
+      unlockVoice(); speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(sample);
+      const v = pickVoice(lang); if (v) u.voice = v;
+      u.lang = lang === 'zh' ? 'zh-CN' : lang === 'ms' ? 'ms-MY' : 'en-US';
+      u.rate = Number(localStorage.getItem('novaRate')) || 1.05;
+      speechSynthesis.speak(u);
+    });
+    if (!list.length) missing.push(label);
+    row.append(l, sel, play); box.append(row);
+  }
+  $('stdNote').textContent = missing.length ? 'No ' + missing.join(' / ') + ' voice on this device yet. Add one in your phone’s Settings → Accessibility → Read & Speak → Voices.' : 'Better voices: Settings → Accessibility → Read & Speak → Voices, download an “Enhanced” or “Premium” voice.';
+}
+function showRate() { const r = Number(localStorage.getItem('novaRate')) || 1.05; $('rateIn').value = r; $('rateOut').textContent = r.toFixed(2) + '×'; }
+$('rateIn').addEventListener('input', () => { localStorage.setItem('novaRate', $('rateIn').value); showRate(); });
+$('voicePickBtn').addEventListener('click', () => {
+  renderLiveVoices(); renderStdVoices(); showRate();
+  $('voiceSheet').hidden = false;
+  if ('speechSynthesis' in window) speechSynthesis.onvoiceschanged = () => { if (!$('voiceSheet').hidden) renderStdVoices(); };
+});
+$('voiceDone').addEventListener('click', () => { $('voiceSheet').hidden = true; if (sampleAudio) sampleAudio.pause(); });
 // ---------- Voice in: Nova records, OpenAI transcribes (auto language) ----------
 let mediaRec = null, chunks = [], micStream = null, recording = false, stopTimer = null;
 function pickMime() {
