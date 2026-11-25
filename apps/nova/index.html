@@ -443,6 +443,7 @@ function estSpeech(text) {
 function talkAfter(me) {
   if (me.finished) return; me.finished = true;
   clearInterval(me.poll); clearTimeout(me.cap);
+  if (me.capHit && 'speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch {} }
   if (talk === me) talk = null;
   if (pendingAction && !pendingAction.settled) setTimeout(listenForConfirm, 250);
   else if (engine !== 'std' && alwaysOn && !live) setTimeout(liveStart, 250);  // live voice picks up the follow-up
@@ -452,7 +453,7 @@ function talkAfter(me) {
 function talkStart() {
   // Don't record Nova's own voice: drop any open listening while it talks.
   if (recording && recordTarget === 'followup') { lastHeardSpeech = false; stopRecording(); }
-  const me = { text: '', done: false, finished: false, started: Date.now(), lastSay: Date.now(), quiet: 0, poll: null, cap: null };
+  const me = { text: '', done: false, finished: false, started: Date.now(), lastSay: Date.now(), quiet: 0, poll: null, cap: null, pending: 0 };
   talk = me;
   if (!('speechSynthesis' in window)) return me;
   speechSynthesis.cancel();
@@ -477,6 +478,8 @@ function talkSay(text) {
   u.lang = rl === 'zh' ? 'zh-CN' : rl === 'ms' ? 'ms-MY' : 'en-US';
   u.rate = 1.05;
   u.onstart = () => setState('speaking', 'Speaking — tap mic to interrupt');
+  me.pending++;
+  u.onend = u.onerror = () => { me.pending--; if (me.done && me.pending <= 0) setTimeout(() => talkAfter(me), 200); };
   speechSynthesis.speak(u);
 }
 function talkEnd() {
@@ -484,7 +487,8 @@ function talkEnd() {
   if (!me) { talkAfter({ finished: false }); return; }
   me.done = true;
   if (!('speechSynthesis' in window)) { talkAfter(me); return; }
-  me.cap = setTimeout(() => talkAfter(me), Math.max(500, me.started + estSpeech(me.text) + 2500 - Date.now()));
+  if (me.pending <= 0 && !speechSynthesis.speaking) setTimeout(() => talkAfter(me), 300);
+  me.cap = setTimeout(() => { me.capHit = true; talkAfter(me); }, Math.max(500, me.started + estSpeech(me.text) + 2500 - Date.now()));
 }
 function speak(text) { if (live) return; talkStart(); talkSay(text); talkEnd(); }  // in a live call, the live voice does the talking
 
@@ -1180,12 +1184,18 @@ function endConversation() {
   setState(null, handsFreeOn ? 'Say \u201c' + wakeLabel + '\u201d to talk' : 'Tap the mic to talk');
 }
 let followStarting = false;
+let followWaits = 0;
 function listenForFollowUp() {
   if (live) return;
   if (!conversationOn || recording || busy || followStarting) return;
   if (pendingAction && !pendingAction.settled) return;
-  if ('speechSynthesis' in window && speechSynthesis.speaking) return;
-  if (!conversationUntil || Date.now() >= conversationUntil) { if (conversationUntil) endConversation(); return; }
+  if ('speechSynthesis' in window && speechSynthesis.speaking) {
+    // iPhone sometimes keeps saying "speaking" after Nova has finished: retry, then clear it.
+    if (++followWaits > 6) { speechSynthesis.cancel(); followWaits = 0; }
+    setTimeout(listenForFollowUp, 500); return;
+  }
+  followWaits = 0;
+  if (!conversationUntil || Date.now() >= conversationUntil) { if (conversationUntil) endConversation(); else setState(null, 'Tap the mic to talk'); return; }
   recordTarget = 'followup';
   followStarting = true;
   startRecording().finally(() => { followStarting = false; });
