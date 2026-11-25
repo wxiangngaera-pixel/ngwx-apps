@@ -1019,7 +1019,7 @@ function describe(a) {
   const who = [a.to_name, a.to].filter(Boolean).join(' · ') || 'choose contact';
   switch (a.type) {
     case 'call': return 'Call ' + who;
-    case 'whatsapp': return 'WhatsApp ' + who + (a.to ? (a.from === 'business' ? '\nFrom: Alphas number (016-808 9183)' : '\nFrom: your WhatsApp') + ' — Nova sends it' : '\nOpens WhatsApp to pick the chat') + (a.text ? '\n“' + a.text + '”' : '');
+    case 'whatsapp': return 'WhatsApp ' + who + (a.to ? '\nOpens WhatsApp on your phone — you tap Send' : '\nOpens WhatsApp to pick the chat') + (a.text ? '\n“' + a.text + '”' : '');
     case 'sms': return 'Message ' + who + (a.text ? '\n“' + a.text + '”' : '');
     case 'email': return 'Email ' + who + (a.subject ? '\nSubject: ' + a.subject : '') + (a.text ? '\n“' + a.text + '”' : '');
     case 'navigate': return 'Directions to ' + (a.place || '?') + ' (' + ({ google: 'Google Maps', apple: 'Apple Maps' }[a.app] || 'Waze') + ')';
@@ -1065,7 +1065,8 @@ function runAction(a) {
   }
 }
 // WhatsApp with a number: Nova sends it itself (no phone app), after Boss confirms.
-function sentByNova(a) { return a.type === 'whatsapp' && !!a.to && !!a.text; }
+// Nova no longer sends WhatsApp itself: the only linked numbers are not Boss's own. WhatsApp opens on his phone instead.
+function sentByNova(a) { return false; }
 async function sendByNova(entry) {
   const a = entry.a;
   entry.done('Sending\u2026');
