@@ -206,7 +206,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261125-2100';
+const NOVA_BUILD = 'b20261125-2120';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -240,7 +240,7 @@ async function showScreen() {
   $('contactsBtn').hidden = !session;
   $('linkWaBtn').hidden = !session;
   $('voicePickBtn').hidden = !session;
-  if (session) { loadVoiceProfile(); loadHistory(); }
+  if (session) { loadVoiceProfile(); loadHistory().finally(() => setTimeout(showQueue, 300)); }
   if (session) {
     const h = new Date().toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', hour: 'numeric', hour12: false });
     const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
@@ -1280,6 +1280,7 @@ async function sendByNova(entry) {
     if (data.status === 'sent') { entry.done('Sent \u2713 from ' + from); speak('Sent, Boss.'); }
     else if (data.status === 'failed') throw new Error(data.error || 'WhatsApp could not send it');
     else { entry.done('Queued \u2014 sending from ' + from + ' shortly'); speak('Queued, Boss. It will go out shortly.'); }
+    if (entry.qid) { await queueMark(entry.qid, 'sent'); setTimeout(showQueue, 2500); }
   } catch (e) {
     entry.done('Not sent: ' + (e.message || e));
     const go = document.createElement('button');
@@ -1291,10 +1292,10 @@ async function sendByNova(entry) {
     speak('Sorry Boss, it did not send. Tap to open WhatsApp instead.');
   }
 }
-function showAction(a) {
+function showAction(a, q) {
   const card = document.createElement('div');
   card.className = 'act';
-  const k = document.createElement('div'); k.className = 'k'; k.textContent = (ACT_LABEL[a.type] || 'Action') + ' — tap to confirm';
+  const k = document.createElement('div'); k.className = 'k'; k.textContent = (q && q.readback) ? q.readback : (ACT_LABEL[a.type] || 'Action') + ' — tap to confirm';
   const d = document.createElement('div'); d.className = 'd'; d.textContent = describe(a);
   const row = document.createElement('div'); row.className = 'row';
   const no = document.createElement('button'); no.type = 'button'; no.textContent = 'Cancel';
@@ -1302,8 +1303,8 @@ function showAction(a) {
   const yes = document.createElement('button'); yes.type = 'button'; yes.textContent = 'Confirm';
   yes.style.cssText = 'background:var(--orange);border:0;color:#fff';
   const done = (txt) => { row.remove(); k.textContent = txt; card.style.borderColor = 'var(--line)'; };
-  const entry = { a, done, card, settled: false };
-  entry.cancel = () => { if (entry.settled) return; entry.settled = true; done('Cancelled'); };
+  const entry = { a, done, card, settled: false, qid: q ? q.id : null };
+  entry.cancel = () => { if (entry.settled) return; entry.settled = true; done('Cancelled'); if (entry.qid) queueMark(entry.qid, 'cancelled'); };
   entry.confirm = () => { if (entry.settled) return; entry.settled = true; if (sentByNova(a)) { sendByNova(entry); return; } done('Confirmed \u2014 opened on this device'); runAction(a); };
   no.addEventListener('click', () => { entry.cancel(); pendingAction = null; });
   yes.addEventListener('click', () => { entry.confirm(); pendingAction = null; });
@@ -1473,6 +1474,25 @@ if (alwaysOn) {
   setTimeout(() => { if (!recording) setState(null, 'Tap anywhere to start listening'); }, 600);
   const kick = () => { document.removeEventListener('click', kick, true); setAlwaysListening(true); };
   document.addEventListener('click', kick, true);
+}
+
+// ---------- Prepared messages waiting for Boss's confirm (one at a time; a follow-up shows only after the one before it is sent) ----------
+const queueShown = new Set();
+async function queueMark(id, status) { try { await sb.from('nova_queue').update({ status, done_at: new Date().toISOString() }).eq('id', id); } catch {} }
+async function showQueue() {
+  try {
+    if (pendingAction && !pendingAction.settled) return;
+    const { data } = await sb.from('nova_queue').select('id,action,readback,after_id,status').order('created_at');
+    if (!data) return;
+    const st = Object.fromEntries(data.map((r) => [r.id, r.status]));
+    const next = data.find((r) => r.status === 'waiting' && !queueShown.has(r.id) && (!r.after_id || st[r.after_id] === 'sent'));
+    if (!next) return;
+    queueShown.add(next.id);
+    dbg('queue show ' + next.id);
+    showAction(next.action, next);
+    setState(null, next.readback || 'Tap Confirm or Cancel');
+    speak(next.readback || 'Ready, Boss. Confirm?');
+  } catch (e) { dbg('queue error ' + e); }
 }
 
 // ---------- 📎 Attach + review (proposals, documents, screenshots) ----------
