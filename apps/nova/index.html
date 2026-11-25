@@ -164,7 +164,7 @@ async function showScreen() {
   $('login').hidden = !!session;
   $('main').hidden = !session;
   $('signout').hidden = !session;
-  $('voiceBtn').hidden = !session;
+  $('voiceBtn').hidden = true; // voice lock parked
   $('contactsBtn').hidden = !session;
   if (session) { loadVoiceProfile(); loadHistory(); }
   if (session) {
@@ -438,7 +438,7 @@ async function getMic() {
 }
 function scheduleMicRelease() {
   clearTimeout(micReleaseTimer);
-  micReleaseTimer = setTimeout(() => { if (!recording && warmMic) { warmMic.getTracks().forEach((t) => t.stop()); warmMic = null; } }, 120000);
+  micReleaseTimer = setTimeout(() => { if (!recording && !handsFreeOn && warmMic) { warmMic.getTracks().forEach((t) => t.stop()); warmMic = null; } }, 120000);
 }
 async function startRecording() {
   const mime = pickMime();
@@ -501,7 +501,7 @@ function bytesToB64(u) { let s = ''; for (let i = 0; i < u.length; i += 0x8000) 
 async function loadVoiceProfile() {
   const { data } = await sb.from('nova_voice_profiles').select('profile').maybeSingle();
   voiceProfile = data?.profile ? { bytes: b64ToBytes(data.profile) } : null;
-  $('lockBanner').hidden = !!voiceProfile;
+  $('lockBanner').hidden = true; // voice lock parked (Picovoice declined)
   $('voiceBtn').textContent = voiceProfile ? 'Voice lock \u2713' : 'Voice lock';
 }
 
@@ -600,45 +600,89 @@ $('enrollRec').addEventListener('click', () => {
   startRecording();
 });
 
-// ---------- Hands-free: say "Nova" (Picovoice Porcupine, runs on this device) ----------
-let handsFreeOn = false, porcupine = null, wakeActive = false, wakeLock = null, wakeLabel = 'Nova';
-const PORCUPINE_MODEL = { publicPath: 'porcupine_params.pv', customWritePath: 'nova_porcupine_4', version: 1 };
+// ---------- Hands-free: say "Hey Jarvis" (openWakeWord, free & open-source, runs on this device) ----------
+let handsFreeOn = false, wakeActive = false, wakeLock = null, wakeLabel = 'Hey Jarvis';
+const ORT_CDN = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
+const WAKE_THRESHOLD = 0.5;
+let owwReady = null, sMel = null, sEmb = null, sKw = null;
+let wakeAC = null, wakeNode = null;
+let tail480 = new Float32Array(480), acc16 = [], rpos = 0, melFrames = [], embeds = [], queue = Promise.resolve(), lastWake = 0;
 
 async function loadScript(src, globalName) {
   if (window[globalName]) return;
   await new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = () => rej(new Error('Could not load ' + globalName)); document.head.appendChild(sc); });
 }
-async function keywordForNova() {
-  // Custom "Nova" wake word file (trained in Picovoice Console). Until it exists, use the built-in "Jarvis".
-  try {
-    const r = await fetch('nova_wasm.ppn', { method: 'HEAD', cache: 'no-store' });
-    if (r.ok) { wakeLabel = 'Nova'; return { publicPath: 'nova_wasm.ppn', label: 'Nova', sensitivity: 0.6, customWritePath: 'nova_kw_1', version: 1 }; }
-  } catch {}
-  wakeLabel = 'Jarvis';
-  return { builtin: window.PorcupineWeb.BuiltInKeyword.Jarvis, sensitivity: 0.6 };
+function loadOww() {
+  if (owwReady) return owwReady;
+  owwReady = (async () => {
+    await loadScript(ORT_CDN + 'ort.min.js', 'ort');
+    window.ort.env.wasm.wasmPaths = ORT_CDN;
+    window.ort.env.wasm.numThreads = 1;
+    const o = { executionProviders: ['wasm'] };
+    [sMel, sEmb, sKw] = await Promise.all([
+      window.ort.InferenceSession.create('oww/melspectrogram.onnx', o),
+      window.ort.InferenceSession.create('oww/embedding_model.onnx', o),
+      window.ort.InferenceSession.create('oww/hey_jarvis_v0.1.onnx', o),
+    ]);
+  })();
+  owwReady.catch(() => { owwReady = null; });
+  return owwReady;
 }
+// One 80 ms chunk (1280 samples, 16 kHz, int16 scale) through the 3 openWakeWord models.
+async function processChunk(chunk) {
+  const T = window.ort.Tensor;
+  const buf = new Float32Array(480 + 1280); buf.set(tail480); buf.set(chunk, 480);
+  tail480 = chunk.slice(1280 - 480);
+  const m = await sMel.run({ input: new T('float32', buf, [1, buf.length]) });
+  const md = m.output.data, n = md.length / 32;
+  for (let i = 0; i < n; i++) { const f = new Float32Array(32); for (let j = 0; j < 32; j++) f[j] = md[i * 32 + j] / 10 + 2; melFrames.push(f); }
+  if (melFrames.length > 120) melFrames = melFrames.slice(-120);
+  if (melFrames.length < 76) return;
+  const win = new Float32Array(76 * 32); melFrames.slice(-76).forEach((f, i) => win.set(f, i * 32));
+  const e = await sEmb.run({ input_1: new T('float32', win, [1, 76, 32, 1]) });
+  embeds.push(Float32Array.from(e.conv2d_19.data));
+  if (embeds.length > 16) embeds = embeds.slice(-16);
+  if (embeds.length < 16) return;
+  const feat = new Float32Array(16 * 96); embeds.forEach((v, i) => feat.set(v, i * 96));
+  const k = await sKw.run({ 'x.1': new T('float32', feat, [1, 16, 96]) });
+  const score = k[sKw.outputNames[0]].data[0];
+  if (score > WAKE_THRESHOLD && Date.now() - lastWake > 2000 && wakeActive) { lastWake = Date.now(); onWake(); }
+}
+function resetWakeState() { tail480 = new Float32Array(480); acc16 = []; rpos = 0; melFrames = []; embeds = []; }
 async function startWake() {
-  await loadScript('https://cdn.jsdelivr.net/npm/@picovoice/web-voice-processor@4.0.8/dist/iife/index.js', 'WebVoiceProcessor');
-  await loadScript('https://cdn.jsdelivr.net/npm/@picovoice/porcupine-web@4.0.1/dist/iife/index.js', 'PorcupineWeb');
-  if (!porcupine) {
-    const kw = await keywordForNova();
-    porcupine = await window.PorcupineWeb.PorcupineWorker.create(await getEagleKey(), kw, onWake, PORCUPINE_MODEL);
+  await loadOww();
+  const stream = await getMic();
+  if (!wakeAC) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    wakeAC = new AC();
+    const src = wakeAC.createMediaStreamSource(stream);
+    wakeNode = wakeAC.createScriptProcessor(4096, 1, 1);
+    src.connect(wakeNode); wakeNode.connect(wakeAC.destination);
+    wakeNode.onaudioprocess = (ev) => {
+      if (!wakeActive) return;
+      const inp = ev.inputBuffer.getChannelData(0), ratio = wakeAC.sampleRate / 16000;
+      // Downsample to 16 kHz (average each step) and scale to int16 range, as openWakeWord expects.
+      for (; rpos < inp.length; rpos += ratio) {
+        const a = Math.floor(rpos), b = Math.min(inp.length, Math.floor(rpos + ratio));
+        let sum = 0; for (let i = a; i < Math.max(b, a + 1); i++) sum += inp[i];
+        acc16.push((sum / Math.max(1, b - a)) * 32767);
+      }
+      rpos -= inp.length;
+      while (acc16.length >= 1280) { const c = Float32Array.from(acc16.splice(0, 1280)); queue = queue.then(() => processChunk(c)).catch(() => {}); }
+    };
   }
+  await wakeAC.resume();
   await resumeWake();
 }
 async function resumeWake() {
-  if (!handsFreeOn || !porcupine || wakeActive || recording || busy || ('speechSynthesis' in window && speechSynthesis.speaking)) return;
-  try {
-    await window.WebVoiceProcessor.WebVoiceProcessor.subscribe(porcupine);
-    wakeActive = true;
-    $('status').textContent = 'Say \u201c' + wakeLabel + '\u201d to talk';
-  } catch (e) { $('status').textContent = 'Hands-free problem: ' + (e.message || e); }
+  if (!handsFreeOn || !sKw || wakeActive || recording || busy || ('speechSynthesis' in window && speechSynthesis.speaking)) return;
+  if (pendingAction && !pendingAction.settled) return;
+  resetWakeState();
+  try { await wakeAC?.resume(); } catch {}
+  wakeActive = true;
+  $('status').textContent = 'Say “' + wakeLabel + '” to talk';
 }
-async function pauseWake() {
-  if (!wakeActive) return;
-  wakeActive = false;
-  try { await window.WebVoiceProcessor.WebVoiceProcessor.unsubscribe(porcupine); } catch {}
-}
+async function pauseWake() { wakeActive = false; }
 async function onWake() {
   if (!handsFreeOn || recording || busy) return;
   await pauseWake();
@@ -677,7 +721,7 @@ async function setHandsFree(on) {
     unlockVoice();
     try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {}
     try { await startWake(); }
-    catch (e) { handsFreeOn = false; setHandsFree(false); addMsg('err', 'Hands-free needs the Picovoice key: ' + (e.message || e)); }
+    catch (e) { handsFreeOn = false; setHandsFree(false); addMsg('err', 'Hands-free problem: ' + (e.message || e)); }
   } else {
     await pauseWake();
     try { await wakeLock?.release(); } catch {}
