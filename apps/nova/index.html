@@ -66,6 +66,7 @@
   <div class="top">
     <div class="brand">NOVA</div>
     <div style="display:flex;gap:4px;align-items:center">
+      <button class="link" id="linkWaBtn" hidden>Link WhatsApp</button>
       <button class="link" id="contactsBtn" hidden>Contacts</button>
       <input type="file" id="vcfFile" accept=".vcf,text/vcard,text/x-vcard" hidden>
       <button class="link" id="voiceBtn" hidden style="color:var(--purple-text);font-weight:600">Voice lock</button>
@@ -154,7 +155,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261125-1135';
+const NOVA_BUILD = 'b20261125-1145';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -186,6 +187,7 @@ async function showScreen() {
   $('signout').hidden = !session;
   $('voiceBtn').hidden = true; // voice lock parked
   $('contactsBtn').hidden = !session;
+  $('linkWaBtn').hidden = !session;
   if (session) { loadVoiceProfile(); loadHistory(); }
   if (session) {
     const h = new Date().toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', hour: 'numeric', hour12: false });
@@ -679,6 +681,49 @@ async function liveTool(me, name, args) {
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && live) liveStop(); });
 
+
+// ---------- Link Boss's own WhatsApp (013-610 0205) to Nova, by QR ----------
+// The QR is shown here; scan it from WhatsApp on the phone with 013-610 0205: Settings → Linked devices → Link a device.
+let linkPoll = null;
+async function linkCall(name) { return brainCall({ mode: 'link', name }); }
+$('linkWaBtn').addEventListener('click', async () => {
+  if (linkPoll) return;
+  const card = document.createElement('div'); card.className = 'act';
+  const k = document.createElement('div'); k.className = 'k'; k.textContent = 'Link your WhatsApp to Nova';
+  const d = document.createElement('div'); d.className = 'd'; d.textContent = 'Starting…';
+  const img = document.createElement('img'); img.alt = 'WhatsApp link QR code'; img.hidden = true;
+  img.style.cssText = 'width:100%;max-width:280px;align-self:center;background:#fff;border-radius:12px;padding:10px';
+  const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
+  cancel.style.cssText = 'background:none;border:1px solid var(--line);color:var(--text)';
+  card.append(k, d, img, cancel); $('log').appendChild(card); card.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  let lastQr = '', t0 = Date.now(), QR = null;
+  const stop = (msg, keep) => { clearInterval(linkPoll); linkPoll = null; img.hidden = true; cancel.remove(); d.textContent = msg; if (!keep) linkCall('link_stop').catch(() => {}); };
+  cancel.addEventListener('click', () => stop('Cancelled — nothing was linked.'));
+  try {
+    const st0 = await linkCall('link_status');
+    if (st0.connected && st0.right_number) { stop('Already linked ✓ Nova sends WhatsApp from 013-610 0205.', true); return; }
+    await linkCall('link_start');
+  } catch (e) { stop('Could not start: ' + (e.message || e), true); return; }
+  d.textContent = 'Getting the QR code…';
+  linkPoll = setInterval(async () => {
+    try {
+      const st = await linkCall('link_status');
+      if (st.connected) {
+        if (!st.right_number) { stop('That was a different WhatsApp (' + st.phone + '), not 013-610 0205. I unlinked it — please scan from the phone with 013-610 0205.'); return; }
+        stop('Linked ✓ Nova will now send WhatsApp from your own number, 013-610 0205 — only after you confirm.', true); speak('Linked, Boss.'); return;
+      }
+      if (st.qr && st.qr !== lastQr) {
+        lastQr = st.qr;
+        if (!QR) QR = (await import('https://esm.sh/qrcode@1.5.4')).default;
+        img.src = await QR.toDataURL(st.qr, { margin: 1, width: 560 }); img.hidden = false;
+        d.textContent = 'On the phone with 013-610 0205: WhatsApp → Settings → Linked devices → Link a device, then scan this code.';
+      }
+      if (!st.bridge_alive && Date.now() - t0 > 20000) { stop('The WhatsApp link service is not responding right now. Try again later.'); return; }
+      if (['qr_timeout', 'logged_out'].includes(st.state)) { stop('The code expired. Tap Link WhatsApp to try again.'); return; }
+      if (Date.now() - t0 > 180000) stop('Timed out. Tap Link WhatsApp to try again.');
+    } catch (e) { dbg('link poll ' + (e.message || e)); }
+  }, 2000);
+});
 // ---------- Voice in: Nova records, OpenAI transcribes (auto language) ----------
 let mediaRec = null, chunks = [], micStream = null, recording = false, stopTimer = null;
 function pickMime() {
@@ -1031,7 +1076,7 @@ function describe(a) {
   const who = [a.to_name, a.to].filter(Boolean).join(' · ') || 'choose contact';
   switch (a.type) {
     case 'call': return 'Call ' + who;
-    case 'whatsapp': return 'WhatsApp ' + who + (a.to ? '\nOpens WhatsApp on your phone — you tap Send' : '\nOpens WhatsApp to pick the chat') + (a.text ? '\n“' + a.text + '”' : '');
+    case 'whatsapp': return 'WhatsApp ' + who + (a.to ? '\nFrom: your WhatsApp (013-610 0205) — Nova sends it' : '\nOpens WhatsApp to pick the chat') + (a.text ? '\n“' + a.text + '”' : '');
     case 'sms': return 'Message ' + who + (a.text ? '\n“' + a.text + '”' : '');
     case 'email': return 'Email ' + who + (a.subject ? '\nSubject: ' + a.subject : '') + (a.text ? '\n“' + a.text + '”' : '');
     case 'navigate': return 'Directions to ' + (a.place || '?') + ' (' + ({ google: 'Google Maps', apple: 'Apple Maps' }[a.app] || 'Waze') + ')';
@@ -1077,8 +1122,8 @@ function runAction(a) {
   }
 }
 // WhatsApp with a number: Nova sends it itself (no phone app), after Boss confirms.
-// Nova no longer sends WhatsApp itself: the only linked numbers are not Boss's own. WhatsApp opens on his phone instead.
-function sentByNova(a) { return false; }
+// Nova sends WhatsApp only from Boss's own number (013-610 0205). If it isn't linked, it falls back to opening WhatsApp on his phone.
+function sentByNova(a) { return a.type === 'whatsapp' && !!a.to && !!a.text; }
 async function sendByNova(entry) {
   const a = entry.a;
   entry.done('Sending\u2026');
@@ -1086,7 +1131,7 @@ async function sendByNova(entry) {
     const { data, error } = await sb.functions.invoke('nova-brain', { body: { mode: 'execute', action: a } });
     if (error) { let m = error.message; try { const b = await error.context?.json(); if (b?.error) m = b.error; } catch {} throw new Error(m); }
     if (data.error) throw new Error(data.error);
-    const from = data.from === 'business' ? 'the Alphas number' : 'your WhatsApp';
+    const from = 'your WhatsApp (013-610 0205)';
     if (data.status === 'sent') { entry.done('Sent \u2713 from ' + from); speak('Sent, Boss.'); }
     else if (data.status === 'failed') throw new Error(data.error || 'WhatsApp could not send it');
     else { entry.done('Queued \u2014 sending from ' + from + ' shortly'); speak('Queued, Boss. It will go out shortly.'); }
