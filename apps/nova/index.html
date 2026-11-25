@@ -153,6 +153,18 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+// Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
+const NOVA_BUILD = 'b20261125-1135';
+async function checkUpdate() {
+  try {
+    const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
+    const t = await r.text();
+    const m = t.match(/NOVA_BUILD = '([^']+)'/);
+    if (m && m[1] !== NOVA_BUILD && !sessionStorage.getItem('novaReloaded' + m[1])) { sessionStorage.setItem('novaReloaded' + m[1], '1'); location.reload(); }
+  } catch {}
+}
+checkUpdate();
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate(); });
 // Diagnostic log: records what Nova does on this device (no audio, no message text) so problems can be traced.
 const DEV = /iPhone|iPad/.test(navigator.userAgent) ? 'iphone' : /Mac/.test(navigator.userAgent) ? 'mac' : 'other';
 let dbgBuf = [];
