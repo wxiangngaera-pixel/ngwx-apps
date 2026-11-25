@@ -153,6 +153,13 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+// Diagnostic log: records what Nova does on this device (no audio, no message text) so problems can be traced.
+const DEV = /iPhone|iPad/.test(navigator.userAgent) ? 'iphone' : /Mac/.test(navigator.userAgent) ? 'mac' : 'other';
+let dbgBuf = [];
+function dbg(ev) { const t = new Date(); dbgBuf.push({ at: t.toISOString(), device: DEV, ev: String(ev).slice(0, 300) }); }
+setInterval(() => { if (!dbgBuf.length) return; const rows = dbgBuf; dbgBuf = []; sb.from('nova_debug').insert(rows).then(({ error }) => { if (error) console.warn('dbg', error.message); }); }, 3000);
+window.addEventListener('error', (e) => dbg('JS error: ' + e.message + ' @' + e.lineno));
+window.addEventListener('unhandledrejection', (e) => dbg('Promise error: ' + (e.reason?.message || e.reason)));
 
 const $ = (id) => document.getElementById(id);
 const app = $('app');
@@ -196,6 +203,7 @@ $('signout').addEventListener('click', () => { historyLoaded = false; oldestAt =
 
 // ---------- Conversation ----------
 function setState(s, text) {
+  dbg('state ' + (s || 'idle') + ': ' + text);
   if (!s && typeof alwaysOn !== 'undefined' && alwaysOn) setTimeout(() => listenForFollowUp(), 600);
   if (!s && typeof handsFreeOn !== 'undefined' && handsFreeOn) setTimeout(() => resumeWake(), 400);
   app.classList.remove('listening', 'thinking', 'speaking');
@@ -342,6 +350,7 @@ async function runBrain(body, typed) {
   let bubble = null, said = '', heard = typed || '', final = null, ignored = false;
   try {
     await streamBrain(body, (ev) => {
+      if (ev.t !== 'say') dbg('brain ' + ev.t + (ev.error ? ' ' + ev.error : ''));
       if (ev.t === 'heard') { heard = ev.heard; addMsg('me', ev.heard); }
       else if (ev.t === 'say') {
         said += (said ? ' ' : '') + ev.text;
@@ -442,6 +451,7 @@ function estSpeech(text) {
 }
 function talkAfter(me) {
   if (me.finished) return; me.finished = true;
+  dbg('talk done cap=' + !!me.capHit + ' pending=' + me.pending + ' speaking=' + ('speechSynthesis' in window && speechSynthesis.speaking) + ' alwaysOn=' + alwaysOn + ' engine=' + engine);
   clearInterval(me.poll); clearTimeout(me.cap);
   if (me.capHit && 'speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch {} }
   if (talk === me) talk = null;
@@ -500,12 +510,12 @@ let live = null;
 const ENGINE_LABEL = { std: 'Voice: Standard', mini: 'Voice: Live mini', full: 'Voice: Live full' };
 const LIVE_IDLE_MS = 90000; // hang up after 90 s with nobody talking (saves money)
 function showEngine() {
-  const b = $('engine'); b.textContent = ENGINE_LABEL[engine];
+  const b = $('engine'); b.textContent = live ? 'End live call' : ENGINE_LABEL[engine];
   const on = engine !== 'std';
   b.style.color = on ? 'var(--orange)' : ''; b.style.borderColor = on ? 'var(--orange)' : '';
 }
 $('engine').addEventListener('click', () => {
-  if (live) liveStop();
+  if (live) { liveStop('Live call ended'); return; }   // during a call this button is "End live call"
   engine = engine === 'std' ? 'mini' : engine === 'mini' ? 'full' : 'std';
   localStorage.setItem('novaEngine', engine);
   showEngine();
@@ -535,15 +545,31 @@ async function liveStart() {
     me.audio = document.createElement('audio'); me.audio.autoplay = true; me.audio.setAttribute('playsinline', '');
     document.body.appendChild(me.audio);
     me.audio.play().catch(() => {}); // unlock playback on this tap (iPhone)
+    try { const AC = window.AudioContext || window.webkitAudioContext; if (!levelAC) levelAC = new AC(); levelAC.resume(); } catch {}
+    dbg('live start ' + engine);
     const [j, mic] = await Promise.all([brainCall({ mode: 'live_session', model: engine === 'full' ? 'full' : 'mini', history: history.slice(-12) }), getMic()]);
     if (me.closed) return;
     const pc = new RTCPeerConnection(); me.pc = pc;
-    pc.ontrack = (e) => { me.audio.srcObject = e.streams[0]; me.audio.play().catch(() => {}); };
+    pc.ontrack = (e) => {
+      dbg('live track');
+      me.audio.srcObject = e.streams[0];
+      me.audio.play().then(() => dbg('live audio playing')).catch((err) => {
+        dbg('live audio blocked: ' + err.message + ' -> using audio engine');
+        try {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!levelAC) levelAC = new AC();
+          levelAC.resume();
+          me.srcNode = levelAC.createMediaStreamSource(e.streams[0]); me.srcNode.connect(levelAC.destination);
+        } catch (e2) { dbg('audio engine failed: ' + e2.message); }
+      });
+    };
     pc.addTrack(mic.getAudioTracks()[0], mic);
     const dc = pc.createDataChannel('oai-events'); me.dc = dc;
     dc.onmessage = (e) => { try { onLive(me, JSON.parse(e.data)); } catch (err) { console.error(err); } };
-    dc.onopen = () => { setState('listening', 'Live — just talk'); liveIdle(me); };
-    pc.onconnectionstatechange = () => { if (['failed', 'closed', 'disconnected'].includes(pc.connectionState) && !me.closed) liveStop('Live call dropped'); };
+    dc.onopen = () => { dbg('live open'); showEngine(); setState('listening', 'Live — just talk'); liveIdle(me); };
+    dc.onclose = () => { dbg('live channel closed'); if (!me.closed) liveStop('Live call dropped'); };
+    // "disconnected" is often a brief blip on mobile networks: only hang up if it really failed.
+    pc.onconnectionstatechange = () => { dbg('live conn ' + pc.connectionState); if (['failed', 'closed'].includes(pc.connectionState) && !me.closed) liveStop('Live call dropped'); };
     const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
     const r = await fetch('https://api.openai.com/v1/realtime/calls', {
       method: 'POST', body: offer.sdp, headers: { Authorization: 'Bearer ' + j.key, 'Content-Type': 'application/sdp' },
@@ -558,7 +584,9 @@ async function liveStart() {
 }
 function liveStop(note) {
   const me = live; if (!me) return;
-  me.closed = true; live = null;
+  dbg('live stop ' + (note || ''));
+  me.closed = true; live = null; showEngine();
+  try { me.srcNode?.disconnect(); } catch {}
   clearTimeout(me.idle);
   try { me.dc?.close(); } catch {}
   try { me.pc?.getSenders().forEach((s) => { try { me.pc.removeTrack(s); } catch {} }); me.pc?.close(); } catch {}
@@ -571,7 +599,14 @@ function liveStop(note) {
 function liveIdle(me) { clearTimeout(me.idle); me.idle = setTimeout(() => { if (live === me) liveStop('Live call ended (quiet for 90 s)'); }, LIVE_IDLE_MS); }
 function liveSend(me, ev) { if (me.dc && me.dc.readyState === 'open') me.dc.send(JSON.stringify(ev)); }
 
+function liveInterrupt(me) {
+  dbg('live interrupt');
+  liveSend(me, { type: 'response.cancel' });
+  liveSend(me, { type: 'output_audio_buffer.clear' });
+  setState('listening', 'Live — just talk');
+}
 async function onLive(me, ev) {
+  if (!/delta$/.test(ev.type)) dbg('live ev ' + ev.type + (ev.type === 'response.done' ? ' ' + (ev.response?.status || '') + ' ' + (ev.response?.status_details?.reason || ev.response?.status_details?.error?.message || '') : '') + (ev.type === 'error' ? ' ' + (ev.error?.message || '') : ''));
   switch (ev.type) {
     case 'input_audio_buffer.speech_started':
       liveIdle(me); setState('listening', 'Live — listening'); break;
@@ -656,6 +691,7 @@ function scheduleMicRelease() {
   micReleaseTimer = setTimeout(() => { if (!recording && !handsFreeOn && !live && warmMic) { warmMic.getTracks().forEach((t) => t.stop()); warmMic = null; } }, 120000);
 }
 async function startRecording() {
+  dbg('rec start ' + recordTarget);
   const mime = pickMime();
   if (mime === null) { setState(null, 'Recording not supported here \u2014 type instead'); return; }
   try {
@@ -670,6 +706,7 @@ async function startRecording() {
     scheduleMicRelease();
     const type = mediaRec.mimeType || mime || 'audio/mp4';
     const blob = new Blob(chunks, { type });
+    dbg('rec stop ' + recordTarget + ' bytes=' + blob.size + ' speech=' + lastHeardSpeech);
     if (blob.size < 2000) { setState(null, recordTarget === 'confirm' ? 'Tap Confirm or Cancel' : 'Too short \u2014 tap, speak, then tap again'); return; }
     if (recordTarget === 'enroll') { enrollFrom(blob); return; }
     if (recordTarget === 'confirm') { handleConfirmAudio(blob, type); return; }
@@ -705,8 +742,9 @@ function stopRecording() {
 $('mic').addEventListener('click', () => {
   if ('speechSynthesis' in window && speechSynthesis.speaking) speechSynthesis.cancel();
   if (engine !== 'std' && !busy) {
-    if (live) liveStop('Live call ended');
-    else { if (recording) { lastHeardSpeech = false; stopRecording(); } liveStart(); }
+    if (live) { liveInterrupt(live); return; }   // in a call: tap = stop Nova talking, keep listening
+    if (recording) { lastHeardSpeech = false; stopRecording(); }
+    liveStart();
     return;
   }
   if (busy) return;
@@ -1187,8 +1225,8 @@ let followStarting = false;
 let followWaits = 0;
 function listenForFollowUp() {
   if (live) return;
-  if (!conversationOn || recording || busy || followStarting) return;
-  if (pendingAction && !pendingAction.settled) return;
+  if (!conversationOn || recording || busy || followStarting) { dbg('follow skip rec=' + recording + ' busy=' + busy + ' starting=' + followStarting); return; }
+  if (pendingAction && !pendingAction.settled) { dbg('follow skip card'); return; }
   if ('speechSynthesis' in window && speechSynthesis.speaking) {
     // iPhone sometimes keeps saying "speaking" after Nova has finished: retry, then clear it.
     if (++followWaits > 6) { speechSynthesis.cancel(); followWaits = 0; }
