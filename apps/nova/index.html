@@ -283,7 +283,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1625h';
+const NOVA_BUILD = 'b20261126-1720p';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -704,7 +704,7 @@ async function ask(text) {
 async function askAudio(b64, mime) {
   if (busy) return;
   if (pendingFile) {
-    try { setState('thinking', 'Listening…'); const j = await brainCall({ mode: 'transcribe', audio: b64, mime }); reviewFile((j.heard || '').trim()); }
+    try { setState('thinking', 'Listening…'); const j = await brainCall({ mode: 'transcribe', audio: b64, mime }); const h = (j.heard || '').trim(); if (OF_PLANWORDS.test(h)) planFromFile(h); else reviewFile(h); }
     catch (err) { addMsg('err', 'Nova had a problem: ' + (err.message || err)); setState(null, 'Tap the mic to talk'); }
     return;
   }
@@ -1704,13 +1704,14 @@ const OF_SLOTS = [['09:00-11:00', '9 – 11 AM'], ['11:00-13:00', '11 AM – 1 P
 const OF_STATES = ['Selangor', 'Kuala Lumpur', 'Putrajaya', 'Negeri Sembilan', 'Melaka', 'Johor', 'Perak', 'Pahang', 'Penang', 'Kedah', 'Perlis', 'Kelantan', 'Terengganu', 'Sabah', 'Sarawak', 'Labuan'];
 const OF_PAY = [['cash', 'Cash'], ['transfer', 'Online Banking'], ['sponsored', 'Sponsored'], ['send', 'Send to customer to pay']];
 let OF = null;
+const OF_PLANWORDS = /\b(meal ?plan|plan|order)\b|餐单|配餐|订单|pelan|pesanan|tempahan/i;
 function ofDate(n) { const d = new Date(Date.now() + 8 * 3600e3 + n * 864e5); return d.toISOString().slice(0, 10); }
 function ofEsc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 // Nova (voice) can pass what Boss already said; it is merged into the open form.
 function orderForm(pre) {
   setView('chat');
   if (!OF) {
-    OF = { step: 0, email: '', name: '', phone: '', isNew: false, fulfil: '', addr1: '', addr2: '', postcode: '', city: '', state: 'Selangor', date: ofDate(2), slot: '', kind: 'meal', items: {}, picks: { copy: {}, plans: {}, cart: false }, cust: null, basis: '', spice: '', seas: '', pack: '', pay: '', spWhy: '', note: '', q: '', all: [], menu: null };
+    OF = { step: 0, email: '', name: '', phone: '', isNew: false, fulfil: '', addr1: '', addr2: '', postcode: '', city: '', state: 'Selangor', date: ofDate(2), slot: '', kind: 'meal', items: {}, picks: { copy: {}, plans: {}, cart: false }, cust: null, basis: '', spice: '', seas: '', pack: '', pay: '', spWhy: '', note: '', q: '', all: [], menu: null, ptext: '', pfile: null, plan: null, pbusy: false, perr: '' };
     brainCall({ mode: 'tool', name: 'aera_customers', args: {} }).then((j) => { OF && (OF.all = JSON.parse(j.output).customers || []); ofDraw(); }).catch(() => {});
     brainCall({ mode: 'tool', name: 'aera_menu_items', args: {} }).then((j) => { OF && (OF.menu = JSON.parse(j.output)); ofDraw(); }).catch(() => { OF && (OF.menu = { meals: [], bundles: [], err: 1 }); ofDraw(); });
   }
@@ -1733,6 +1734,7 @@ function ofMerge(a) {
   const pay = { transfer: 'transfer', cash: 'cash', sponsored: 'sponsored', myacct: 'send', send: 'send' }[a.pay];
   if (pay) F.pay = pay;
   if (a.note) F.note = String(a.note);
+  if (a.plan_text) { F.kind = 'plan'; F.ptext = String(a.plan_text); F.plan = null; ofBuildPlan(); }
   for (const it of a.items || []) if (it && it.id) F.items[it.id] = { kind: it.kind === 'bundle' ? 'bundle' : 'meal', id: it.id, name: it.name || it.id, qty: Math.max(0, +it.qty || 1) };
   // jump to the first step that still needs something
   for (let s = 0; s < 6; s++) if (ofCheck(s)) { F.step = s; return; }
@@ -1756,6 +1758,7 @@ function ofCheck(s) {
     if (!F.date) return 'Pick the date'; if (!F.slot) return 'Pick the time slot'; return '';
   }
   if (s === 3) {
+    if (F.kind === 'plan' && !(F.plan && F.plan.meals.length)) return F.pbusy ? 'Nova is still building the plan…' : 'Type, say or attach the plan, then tap Build plan';
     if (F.kind !== 'plan' && !Object.values(F.items).some((i) => i.qty > 0) && !ofPickCount()) return 'Add at least one Meal, Bundle, past order, saved plan or the Cart';
     return !F.basis ? 'Cooked or Raw weight?' : !F.spice ? 'Spice level?' : !F.seas ? 'Salt level?' : '';
   }
@@ -1816,7 +1819,7 @@ function ofDraw() {
           '<div class="ofhd">Saved Meal Plans</div>' + (C.plans.length ? C.plans.map((p) => row('plans', p.id, F.picks.plans[p.id], ofEsc(p.name || ('Plan \u00b7 ' + p.days + ' day' + (p.days > 1 ? 's' : '') + ' \u00d7 ' + p.per_day + ' meals')), p.boxes + ' boxes \u00b7 RM ' + Number(p.price_rm).toFixed(2) + ' \u00b7 saved ' + cfDay(p.saved))).join('') : '<div class="note" style="padding:8px 10px">None yet</div>') +
           '<div class="ofhd">Cart</div>' + (C.cart ? row('cart', 'cart', F.picks.cart, 'Everything in their Cart', (C.cart.text || (C.cart.plan ? 'A Personalised Meal Plan' : '')) + (C.cart.updated ? ' \u00b7 ' + cfDay(C.cart.updated) : '')) : '<div class="note" style="padding:8px 10px">Empty</div>') + '</div>';
       }
-    } else if (F.kind === 'plan') b += '<div class="note">Personalised Meal Plans are built by the gram. For now the Kitchen Console opens with everything else filled in, and you build the plan there. Building it from your message or voice comes next.</div>';
+    } else if (F.kind === 'plan') b += ofPlanHtml();
     else if (!F.menu) b += '<div class="note">Loading the menu…</div>';
     else {
       const list = (F.kind === 'bundle' ? F.menu.bundles : F.menu.meals) || [];
@@ -1837,12 +1840,12 @@ function ofDraw() {
     const L = (k, v) => '<div class="ofrow"><span>' + k + '</span><span>' + v + '</span></div>';
     b = '<div class="ofsum">' + L('Customer', ofEsc(F.name) + '<br><small>' + ofEsc(F.email) + ' · ' + ofEsc(F.phone) + '</small>') +
       L(F.fulfil === 'pickup' ? 'Self Pick-Up' : 'Delivery', cfDay(F.date) + ', ' + ((OF_SLOTS.find((s) => s[0] === F.slot) || [])[1] || '') + (F.fulfil === 'delivery' ? '<br><small>' + ofEsc(ofAddress()) + '</small>' : '')) +
-      L('Meals', F.kind === 'plan' ? 'Personalised Meal Plan (build in the Console)' : (items.map((i) => i.qty + '\u00d7 ' + ofEsc(i.name)).concat(ofPickLines()).join('<br>') || '\u2014')) +
+      L('Meals', F.kind === 'plan' ? 'Personalised Meal Plan \u00b7 ' + F.plan.meals.length + ' box' + (F.plan.meals.length > 1 ? 'es' : '') + ' over ' + F.plan.days + ' day' + (F.plan.days > 1 ? 's' : '') + '<br><small>Meals about RM ' + F.plan.total_rm.toFixed(2) + '</small>' : (items.map((i) => i.qty + '\u00d7 ' + ofEsc(i.name)).concat(ofPickLines()).join('<br>') || '\u2014')) +
       L('Weight · Spice · Salt', ({ cooked: 'Cooked', raw: 'Raw' })[F.basis] + ' · ' + ({ normal: 'Normal', less: 'Less Spicy', none: 'No Spice' })[F.spice] + ' · ' + ({ normal: 'Normal', less_salt: 'Less Salt', no_salt: 'No Salt' })[F.seas]) +
       L('Packaging', F.pack === 'vacuum' ? 'Vacuum Packed' : 'MAP Bento Box') + L('Payment', (OF_PAY.find((p) => p[0] === F.pay) || [])[1] || '') +
       (F.note ? L('Note', ofEsc(F.note)) : '') + '</div>' +
-      '<div class="note">' + (F.kind === 'plan' ? 'The Kitchen Console opens filled in; build the plan there and tap Save order.' : 'The Kitchen Console opens, gets the Lalamove fee, saves the order and comes straight back here with the Order Number and price.') + '</div>' +
-      '<button type="button" class="btn" id="ofGo" style="background:var(--orange)">' + (F.kind === 'plan' ? 'Open in Kitchen Console' : 'Yes, submit to Kitchen') + '</button>' +
+      '<div class="note">The Kitchen Console opens, gets the Lalamove fee, saves the order and comes straight back here with the Order Number and price.</div>' +
+      '<button type="button" class="btn" id="ofGo" style="background:var(--orange)">' + 'Yes, submit to Kitchen' + '</button>' +
       '<button type="button" class="btn ghost" id="ofDraft">Save as Draft</button>';
   }
   const miss = F.step < 6 ? ofCheck(F.step) : '';
@@ -1892,8 +1895,59 @@ function ofWire(w) {
     };
     if (!F.email) setTimeout(() => em.focus(), 50);
   }
+  if ($$('#ofPt')) $$('#ofPt').oninput = (e) => { F.ptext = e.target.value; err(''); };
+  if ($$('#ofPb')) $$('#ofPb').onclick = () => { if (!F.ptext.trim() && !F.pfile) return err('Type or attach the plan first'); ofBuildPlan(); };
+  if ($$('#ofPa')) $$('#ofPa').onclick = () => $$('#ofPf').click();
+  if ($$('#ofPf')) $$('#ofPf').onchange = (e) => { const f = e.target.files[0]; if (!f) return;
+    if (!['application/pdf', 'image/png', 'image/jpeg', 'image/webp'].includes(f.type)) return err('Attach a PDF or an image');
+    if (f.size > 10 * 1024 * 1024) return err('That file is over 10 MB');
+    const rd = new FileReader(); rd.onload = () => { F.pfile = { b64: String(rd.result).split(',')[1], mime: f.type, name: f.name }; ofDraw(); }; rd.readAsDataURL(f); };
+  if ($$('#ofPx')) $$('#ofPx').onclick = () => { F.pfile = null; ofDraw(); };
+  w.querySelectorAll('[data-pdel]').forEach((bt) => bt.onclick = () => { const P = F.plan; P.meals.splice(+bt.dataset.pdel, 1); ofPlanSum(P); ofDraw(); });
   if ($$('#ofGo')) $$('#ofGo').onclick = () => ofSubmit();
   if ($$('#ofDraft')) $$('#ofDraft').onclick = () => ofSubmit(true);
+}
+// ---- Personalised Meal Plan ( 26th Nov 2026 ) : Boss types, says or attaches the plan; Nova builds it from AERA's components and prices it ----
+function ofPlanSum(P) { P.days = P.meals.reduce((a, m) => Math.max(a, m.day), 0); P.boxes = P.meals.length; P.total_rm = Math.round(P.meals.reduce((a, m) => a + m.price, 0) * 100) / 100; }
+function ofPlanHtml() {
+  const F = OF, P = F.plan;
+  let h = '<label for="ofPt">The plan (type it, paste a message, or attach a screenshot / PDF)</label>' +
+    '<textarea class="field" id="ofPt" rows="3" placeholder="e.g. 5 days, 2 meals a day: 200g chicken breast, 100g brown rice, broccoli">' + ofEsc(F.ptext) + '</textarea>' +
+    (F.pfile ? '<div class="found">📎 ' + ofEsc(F.pfile.name) + ' <button type="button" id="ofPx" style="all:unset;cursor:pointer;margin-left:6px">✕</button></div>' : '') +
+    '<input type="file" id="ofPf" accept="application/pdf,image/png,image/jpeg,image/webp" hidden>' +
+    '<div class="two"><button type="button" class="btn ghost" id="ofPa" style="min-height:40px">📎 Attach</button><button type="button" class="btn" id="ofPb" style="min-height:40px;background:var(--orange)"' + (F.pbusy ? ' disabled' : '') + '>' + (F.pbusy ? 'Building…' : P ? 'Rebuild plan' : 'Build plan') + '</button></div>';
+  if (F.perr) h += '<div class="note" style="color:var(--orange)">' + ofEsc(F.perr) + '</div>';
+  if (P && P.meals.length) {
+    h += '<div class="oflist">';
+    let day = 0;
+    P.meals.forEach((m, i) => {
+      if (m.day !== day) { day = m.day; h += '<div class="ofhd">Day ' + day + '</div>'; }
+      h += '<div class="ofit"><span>' + ofEsc(m.comps.map((c) => c.name + ' ' + c.grams + 'g').join(' · ')) + '<small>' + m.kcal + ' kcal · P ' + m.p + ' · C ' + m.c + ' · F ' + m.f + ' · RM ' + m.price.toFixed(2) + '</small></span>' +
+        '<span class="ofq"><button type="button" data-pdel="' + i + '" aria-label="Remove this box">✕</button></span></div>';
+    });
+    h += '<div class="ofit"><span><b>' + P.boxes + ' box' + (P.boxes > 1 ? 'es' : '') + ' over ' + P.days + ' day' + (P.days > 1 ? 's' : '') + '</b><small>Packaging per box included · delivery added in the Kitchen</small></span><b>RM ' + P.total_rm.toFixed(2) + '</b></div></div>';
+    if ((P.assumptions || []).length) h += '<div class="note">Nova assumed: ' + P.assumptions.map(ofEsc).join(' · ') + '</div>';
+    if ((P.unmatched || []).length) h += '<div class="note" style="color:var(--orange)">Not on AERA’s list: ' + P.unmatched.map(ofEsc).join(', ') + '</div>';
+  }
+  return h;
+}
+async function ofBuildPlan() {
+  const F = OF; if (!F || F.pbusy) return; F.pbusy = true; F.perr = ''; ofDraw();
+  try {
+    const j = await brainCall({ mode: 'plan', text: F.ptext, file: F.pfile ? F.pfile.b64 : undefined, mime: F.pfile ? F.pfile.mime : undefined });
+    if (OF !== F) return;
+    if (!j.meals || !j.meals.length) { F.perr = 'Nova couldn’t make any boxes from that' + ((j.unmatched || []).length ? ' (not found: ' + j.unmatched.join(', ') + ')' : '') + '.'; return; }
+    F.plan = j; if (j.spice && !F.spice) F.spice = j.spice; if (j.seas && !F.seas) F.seas = j.seas;
+    const t = 'Plan ready, Boss: ' + j.boxes + ' box' + (j.boxes > 1 ? 'es' : '') + ' over ' + j.days + ' day' + (j.days > 1 ? 's' : '') + ', about RM ' + j.total_rm.toFixed(2) + ' for the meals.';
+    addMsg('nova', t); history.push({ role: 'assistant', content: t }); saveOne('assistant', t); try { speak(t); } catch {}
+  } catch (e) { if (OF === F) F.perr = 'Couldn’t build the plan: ' + (e.message || e); }
+  finally { F.pbusy = false; if (OF === F) ofDraw(); }
+}
+// a file attached with the 📎 and "build a plan / order from this" goes to the plan builder instead of a review
+function planFromFile(t) {
+  const f = pendingFile; pendingFile = null; $('fileChip').hidden = true;
+  addMsg('me', (t || 'Build a plan from this') + ' 📎 ' + f.name);
+  orderForm(); OF.kind = 'plan'; OF.ptext = t || ''; OF.pfile = f; OF.plan = null; ofBuildPlan();
 }
 function ofSubmit(draft) {
   const F = OF;
@@ -1904,11 +1958,11 @@ function ofSubmit(draft) {
     pay: { cash: 'cash', transfer: 'transfer', sponsored: 'cash', send: 'myacct' }[F.pay] };
   if (F.pay === 'sponsored') { d.sp = 'order'; d.spWhy = F.spWhy || 'Sponsored'; }
   if (F.kind !== 'plan') { d.copy = Object.keys(F.picks.copy).filter((k) => F.picks.copy[k]); d.plans = Object.keys(F.picks.plans).filter((k) => F.picks.plans[k]); if (F.picks.cart) d.cart = 1; }
-  else d.plan = 1;
+  else d.pl = F.plan.meals.map((m) => [m.day, m.comps.map((c) => c.code + ':' + c.grams).join(',')]);
   d.back = location.origin + location.pathname;
-  if (draft) d.draft = 1; else if (F.kind !== 'plan') d.auto = 1;
+  if (draft) d.draft = 1; else d.auto = 1;
   const j = btoa(unescape(encodeURIComponent(JSON.stringify(d)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  addMsg('nova', draft ? 'Saving ' + (d.name || 'this') + '\u2019s order as a Draft\u2026' : F.kind === 'plan' ? 'Opening the Kitchen Console for ' + d.name + '’s Personalised Meal Plan…' : 'Sending ' + d.name + '’s order to the Kitchen…');
+  addMsg('nova', draft ? 'Saving ' + (d.name || 'this') + '\u2019s order as a Draft\u2026' : 'Sending ' + d.name + '’s order to the Kitchen…');
   document.getElementById('ofWrap')?.remove(); OF = null;
   location.href = 'https://aeramealprep.net/kitchen/?app=no&nova=' + j + '#neworder';
 }
@@ -2600,7 +2654,7 @@ $('typeForm').addEventListener('submit', (e) => {
   unlockVoice();
   const t = $('typed').value.trim();
   $('typed').value = '';
-  if (pendingFile) { reviewFile(t); return; }
+  if (pendingFile) { if (OF_PLANWORDS.test(t)) planFromFile(t); else reviewFile(t); return; }
   tell(t);
 });
 </script>
