@@ -283,7 +283,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1750c';
+const NOVA_BUILD = 'b20261126-1815q';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -657,6 +657,7 @@ async function streamBrain(body, on) {
 
 async function runBrain(body, typed) {
   let bubble = null, said = '', heard = typed || '', final = null, ignored = false;
+  if (OF && !live) body.form = ofContext();
   try {
     await streamBrain(body, (ev) => {
       if (ev.t !== 'say') dbg('brain ' + ev.t + (ev.error ? ' ' + ev.error : ''));
@@ -677,7 +678,9 @@ async function runBrain(body, typed) {
     throw err;
   }
   if (ignored) return 'ignored';
-  const reply = (final && final.reply) || said;
+  let reply = (final && final.reply) || said;
+  // the New Order form asks its next question itself, right after Nova's short "Got it"
+  if (OF && OF.needAsk) { const q = await ofNextQ(); if (q) { reply = (reply ? reply + ' ' : '') + q; if (bubble) bubble.firstChild.nodeValue = reply; else bubble = addMsg('nova', reply); talkSay(q); } }
   if (!bubble && reply) { addMsg('nova', reply); talkSay(reply); }
   history.push({ role: 'user', content: heard }, { role: 'assistant', content: reply });
   saveExchange(heard, reply);
@@ -1049,7 +1052,8 @@ async function liveTool(me, name, args) {
       // Saved place: go to its exact saved spot, not a text search of the name.
       try { const { data } = await sb.from('nova_places').select('name,lat,lng').ilike('name', String(args.place).trim().replace(/[%_,()"]/g, '')).limit(1); if (data?.[0]) args = { ...args, place: data[0].name, lat: data[0].lat, lng: data[0].lng }; } catch {}
     }
-    if (args && (args.type === 'order_form' || args.type === 'customer_form')) { orderForm(args); return { ok: true, note: 'The New Order form is on his screen with what he said filled in. Say one short line, e.g. "It\'s on your screen, Boss." Then wait; if he says more order details, call prepare_action order_form again with just those.' }; }
+    if (args && (args.type === 'order_form' || args.type === 'customer_form')) { orderForm(args); const q = await ofNextQ();
+      return { ok: true, note: q ? 'Form updated. Now ask him exactly this, in his language, and nothing else: "' + q + '" When he answers, call prepare_action type order_form with just that answer.' : 'Form updated. Say "Okay Boss." and wait.' }; }
     showAction(args); return { ok: true, note: 'Card shown. Read it back in one short sentence and ask "Confirm?". Nothing happens until he confirms.' }; }
   if (name === 'end_call') { setTimeout(() => { if (live === me) liveStop('Live call ended'); }, 1800); return { ok: true }; }
   if (name === 'cancel_action') { if (pendingAction && !pendingAction.settled) pendingAction.cancel(); pendingAction = null; return { ok: true }; }
@@ -1732,7 +1736,15 @@ function ofMerge(a) {
   if (a.fulfil === 'delivery' || a.fulfil === 'pickup') F.fulfil = a.fulfil;
   if (/^\d{4}-\d{2}-\d{2}$/.test(a.date || '')) F.date = a.date;
   if (OF_SLOTS.some((s) => s[0] === a.slot)) F.slot = a.slot;
-  if (a.address && !F.addr1) F.addr1 = String(a.address);
+  if (a.address) { const ad = String(a.address).trim(); F.addr1 = ad; const pc = ad.match(/\b(\d{5})\b/); if (pc && !a.postcode) { F.postcode = pc[1]; const after = ad.slice(ad.indexOf(pc[1]) + 5).split(',')[0].trim(); if (after && !a.city) F.city = after; } }
+  if (a.addr2) F.addr2 = String(a.addr2);
+  if (/^\d{5}$/.test(String(a.postcode || '').trim())) F.postcode = String(a.postcode).trim();
+  if (a.city) F.city = String(a.city);
+  if (a.state) { const st = OF_STATES.find((x) => x.toLowerCase() === String(a.state).toLowerCase()); if (st) F.state = st; }
+  const mt = { a_la_carte: 'meal', bundle: 'bundle', from_customer: 'cust', personalised: 'plan' }[a.meal_type]; if (mt) { F.kind = mt; F.kindSet = true; }
+  if (['last_order', 'cart', 'latest_plan'].includes(a.picks)) { F.kind = 'cust'; F.kindSet = true; F.wantPick = a.picks; }
+  if (a.submit === 'kitchen' || a.submit === 'draft') F.wantSubmit = a.submit;
+  F.needAsk = true;
   if (a.pack === 'bento' || a.pack === 'vacuum') F.pack = a.pack;
   if (a.basis === 'cooked' || a.basis === 'raw') F.basis = a.basis;
   if (['normal', 'less', 'none'].includes(a.spice)) F.spice = a.spice;
@@ -1740,11 +1752,56 @@ function ofMerge(a) {
   const pay = { transfer: 'transfer', cash: 'cash', sponsored: 'sponsored', myacct: 'send', send: 'send' }[a.pay];
   if (pay) F.pay = pay;
   if (a.note) F.note = String(a.note);
-  if (a.plan_text) { F.kind = 'plan'; F.ptext = String(a.plan_text); F.plan = null; ofBuildPlan(); }
+  if (a.plan_text) { F.kind = 'plan'; F.kindSet = true; F.ptext = String(a.plan_text); F.plan = null; ofBuildPlan(); }
+  for (const it of a.items || []) if (it && it.id) { F.kindSet = true; if (!mt && !a.plan_text) F.kind = it.kind === 'bundle' ? 'bundle' : 'meal'; }
   for (const it of a.items || []) if (it && it.id) F.items[it.id] = { kind: it.kind === 'bundle' ? 'bundle' : 'meal', id: it.id, name: it.name || it.id, qty: Math.max(0, +it.qty || 1) };
   // jump to the first step that still needs something
   for (let s = 0; s < 6; s++) if (ofCheck(s)) { F.step = s; return; }
   F.step = 6;
+}
+// ---- Nova asks the order questions one by one ( 26th Nov 2026 ) ----
+function ofFirstGap() { for (let s = 0; s < 6; s++) if (ofCheck(s)) return s; return 6; }
+function ofQuestion() {
+  const F = OF; if (!F) return '';
+  const s = ofFirstGap(); F.step = s;
+  if (s === 0) return 'Who is this order for, Boss? Say their name or email.';
+  if (s === 1) return 'What\u2019s ' + (F.name || 'their') + '\u2019s phone number?';
+  if (s === 2) {
+    if (!F.fulfil) return 'Delivery or self pick-up?';
+    if (F.fulfil === 'delivery' && (!F.addr1.trim() || !/^\d{5}$/.test(F.postcode.trim()) || !F.city.trim()))
+      return F.lastAddr && !F.addr1 ? 'Deliver to the same address as last time, ' + F.lastAddr + '? Or tell me the new address.' : 'What\u2019s the delivery address, with the postcode and city?';
+    if (!F.slot) return 'Which day and time? I have ' + cfDay(F.date) + '. Slots are 9 to 11, 11 to 1, 1 to 3, or 3 to 5.';
+  }
+  if (s === 3) {
+    const has = Object.values(F.items).some((i) => i.qty > 0) || ofPickCount() || (F.kind === 'plan' && F.plan && F.plan.meals.length);
+    if (!has) {
+      if (F.kind === 'plan') return F.pbusy ? '' : 'Tell me the plan: the meals, grams, and how many days.';
+      if (!F.kindSet) return 'What would ' + (F.name ? F.name.split(' ')[0] : 'they') + ' like? A la carte meals, a bundle, their last order, saved plan or cart, or a personalised meal plan?';
+      if (F.kind === 'bundle') return 'Which bundle?';
+      if (F.kind === 'cust') return 'Their last order, their latest saved plan, or their cart?';
+      return 'Which meals, and how many of each?';
+    }
+    if (!F.basis) return 'Cooked or raw weight?';
+    if (!F.spice) return 'Spice level: normal, less spicy, or no spice?';
+    if (!F.seas) return 'And salt: normal, less salt, or no salt?';
+  }
+  if (s === 4) return 'MAP bento box or vacuum packed?';
+  if (s === 5) return 'How will they pay? Cash, online banking, sponsored, or send it to them to pay?';
+  const items = F.kind === 'plan' && F.plan ? F.plan.meals.length + ' box personalised plan, about RM ' + F.plan.total_rm.toFixed(2) + ' for the meals' : Object.values(F.items).filter((i) => i.qty > 0).map((i) => i.qty + ' ' + i.name).concat(ofPickLines().map((x) => x.replace(/<[^>]+>/g, ''))).join(', ');
+  return 'That\u2019s ' + items + ' for ' + F.name + ', ' + (F.fulfil === 'pickup' ? 'self pick-up' : 'delivery') + ' on ' + cfDay(F.date) + ', ' + ((OF_SLOTS.find((x) => x[0] === F.slot) || [])[1] || '') + ', ' + (F.pack === 'vacuum' ? 'vacuum packed' : 'bento box') + ', ' + ((OF_PAY.find((p) => p[0] === F.pay) || [])[1] || '').toLowerCase() + '. Submit to the Kitchen, or save as a draft?';
+}
+// what the brain needs to know while the form is open
+function ofContext() { const F = OF; return { question: F.lastQ || '', customer: F.name ? F.name + ' <' + F.email + '>' : '', step: ofFirstGap() + 1 }; }
+// after an answer: apply "last order / cart / saved plan", submit if he said so, then the next question
+async function ofNextQ() {
+  const F = OF; if (!F) return ''; F.needAsk = false;
+  if (F.wantPick) { if (!F.cust && F.email && !F.isNew) { await new Promise((res) => { ofLoadCust(); const t0 = Date.now(); (function w() { if (!OF || OF.cust || Date.now() - t0 > 8000) return res(); setTimeout(w, 200); })(); }); }
+    const C = F.cust; if (C) { if (F.wantPick === 'last_order' && C.orders[0]) F.picks.copy[C.orders[0].id] = true; if (F.wantPick === 'latest_plan' && C.plans[0]) F.picks.plans[C.plans[0].id] = true; if (F.wantPick === 'cart' && C.cart) F.picks.cart = true; }
+    F.wantPick = ''; }
+  const gap = ofFirstGap();
+  if (F.wantSubmit && gap === 6) { const d = F.wantSubmit === 'draft'; F.wantSubmit = ''; setTimeout(() => ofSubmit(d), 1500); return d ? 'Saving it as a draft.' : 'Sending it to the Kitchen now.'; }
+  F.wantSubmit = '';
+  const q = ofQuestion(); F.lastQ = q; ofDraw(); return q;
 }
 function ofPick(c) {
   const F = OF; if (F.email !== c.email) { F.cust = null; F.picks = { copy: {}, plans: {}, cart: false }; } F.email = c.email; F.name = c.name || ''; F.phone = c.phone ? String(c.phone) : F.phone; F.isNew = false; F.q = c.email;
@@ -1951,7 +2008,8 @@ async function ofBuildPlan() {
     if (!j.meals || !j.meals.length) { F.perr = 'Nova couldn’t make any boxes from that' + ((j.unmatched || []).length ? ' (not found: ' + j.unmatched.join(', ') + ')' : '') + '.'; return; }
     F.plan = j; if (j.spice && !F.spice) F.spice = j.spice; if (j.seas && !F.seas) F.seas = j.seas;
     const t = 'Plan ready, Boss: ' + j.boxes + ' box' + (j.boxes > 1 ? 'es' : '') + ' over ' + j.days + ' day' + (j.days > 1 ? 's' : '') + ', about RM ' + j.total_rm.toFixed(2) + ' for the meals.';
-    addMsg('nova', t); history.push({ role: 'assistant', content: t }); saveOne('assistant', t); try { speak(t); } catch {}
+    const nq = ofQuestion(); OF.lastQ = nq; ofDraw(); const t2 = t + (nq ? ' ' + nq : '');
+    addMsg('nova', t2); history.push({ role: 'assistant', content: t2 }); saveOne('assistant', t2); try { speak(t2); } catch {}
   } catch (e) { if (OF === F) F.perr = 'Couldn’t build the plan: ' + (e.message || e); }
   finally { F.pbusy = false; if (OF === F) ofDraw(); }
 }
