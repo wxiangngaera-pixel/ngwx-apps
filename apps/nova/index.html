@@ -235,7 +235,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1230';
+const NOVA_BUILD = 'b20261126-1145c';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -273,6 +273,7 @@ async function showScreen() {
   $('locBtn').hidden = !session;
   $('settingsBtn').hidden = !session;
   if (session && locOn()) refreshLoc();
+  if (session) checkCalShortcut();
   if (session) { loadVoiceProfile(); loadHistory().finally(() => setTimeout(showQueue, 300)); }
   if (session) {
     const h = new Date().toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', hour: 'numeric', hour12: false });
@@ -1328,6 +1329,9 @@ function describe(a) {
 }
 function icsTime(iso) { return new Date(iso).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z'); }
 function icsEsc(t) { return String(t || '').replace(/[\\,;]/g, (m) => '\\' + m).replace(/\n/g, '\\n'); }
+// True once his "Nova Calendar Sync" Shortcut has sent the calendar at least once (so his Shortcuts are set up).
+var calShortcutReady = false;
+async function checkCalShortcut() { try { const { count } = await sb.from('nova_calendar').select('id', { count: 'exact', head: true }).eq('source', 'sync'); calShortcutReady = (count || 0) > 0 || localStorage.getItem('novaCalShortcut') === 'on'; if (calShortcutReady) localStorage.setItem('novaCalShortcut', 'on'); } catch {} }
 function isApplePhone() { return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
 // KL-time date and time for a +08:00 ISO string, as MinimaList wants them (yyyy-mm-dd, HH:mm).
 function klParts(iso) {
@@ -1368,6 +1372,15 @@ function runAction(a) {
       return;
     }
     case 'calendar':
+      // Once his "Nova Add Event" Shortcut is set up (his calendar has synced at least once), events go straight into iPhone Calendar.
+      if (calShortcutReady && a.start) {
+        const st = a.start, en = a.end || new Date(new Date(st).getTime() + 3600000).toISOString();
+        const line = [a.title || 'Event', st, en, a.place || ''].map((x) => String(x).replace(/\|\|/g, '|')).join('||');
+        sb.from('nova_calendar').insert({ title: a.title || 'Event', start_at: st, end_at: en, location: a.place || null, calendar: 'Nova', source: 'nova' }).then(() => {});
+        location.href = 'shortcuts://run-shortcut?name=' + enc('Nova Add Event') + '&input=text&text=' + enc(line);
+        return;
+      }
+      // falls through to the .ics way below
     case 'reminder': {
       // Both become a Calendar event (.ics). Reminders: 15-min event with an alert at the exact time.
       const isRem = a.type === 'reminder';
@@ -1426,7 +1439,7 @@ function showAction(a, q) {
   const row = document.createElement('div'); row.className = 'row';
   const no = document.createElement('button'); no.type = 'button'; no.textContent = 'Cancel';
   no.style.cssText = 'background:none;border:1px solid var(--line);color:var(--text)';
-  const yes = document.createElement('button'); yes.type = 'button'; yes.textContent = a.type === 'navigate' ? 'Open in ' + ({ google: 'Google Maps', apple: 'Apple Maps' }[a.app] || 'Waze') : a.type === 'task' ? 'Add to MinimaList' : a.type === 'claude' ? 'Open in Claude' : 'Confirm';
+  const yes = document.createElement('button'); yes.type = 'button'; yes.textContent = a.type === 'calendar' ? 'Add to Calendar' : a.type === 'navigate' ? 'Open in ' + ({ google: 'Google Maps', apple: 'Apple Maps' }[a.app] || 'Waze') : a.type === 'task' ? 'Add to MinimaList' : a.type === 'claude' ? 'Open in Claude' : 'Confirm';
   if (a.type === 'navigate') no.textContent = 'Not now';
   yes.style.cssText = 'background:var(--orange);border:0;color:#fff';
   const done = (txt) => { row.remove(); k.textContent = txt; card.style.borderColor = 'var(--line)'; };
