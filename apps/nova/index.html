@@ -267,7 +267,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1505h';
+const NOVA_BUILD = 'b20261126-1515h';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1696,7 +1696,7 @@ function customerForm() {
       const b = document.createElement('button'); b.type = 'button'; if (m === picked) b.className = 'on';
       b.textContent = (m === picked ? '✓ ' : '') + (m.name || m.email) + (m.phone ? ' · ' + m.phone : '') + '\n' + m.email + (m.last_order ? ' · last order ' + fmtDay(m.last_order) : '');
       b.style.whiteSpace = 'pre-line';
-      b.addEventListener('click', () => { picked = m; show(); });
+      b.addEventListener('click', () => { picked = m; em.value = m.email; matches = [m]; show(); });
       found.appendChild(b);
     }
   };
@@ -1716,7 +1716,25 @@ function customerForm() {
     if (matches.length) { picked = matches.length === 1 ? matches[0] : null; show(); nw.hidden = true; }
     else { found.className = 'found bad'; found.textContent = 'No AERA customer with that email.'; nw.hidden = false; }
   };
-  em.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(look, 450); });
+  // Typing: matches from the customer list straight away (first letters of the email, or the name / phone).
+  em.addEventListener('input', () => {
+    clearTimeout(timer); err.hidden = true;
+    const q = em.value.trim().toLowerCase();
+    if (!all.length) { timer = setTimeout(look, 450); return; }
+    picked = null; matches = [];
+    if (!q) { found.hidden = true; nw.hidden = true; return; }
+    const hits = all.filter((c) => (c.email || '').toLowerCase().includes(q) || (c.name || '').toLowerCase().includes(q) || (c.phone || '').replace(/\D/g, '').includes(q.replace(/\D/g, '') || '\u0000'));
+    hits.sort((x, y) => Number(!(x.email || '').toLowerCase().startsWith(q)) - Number(!(y.email || '').toLowerCase().startsWith(q)));
+    if (hits.length) {
+      matches = hits.slice(0, 8);
+      picked = matches.find((c) => (c.email || '').toLowerCase() === q) || (hits.length === 1 ? hits[0] : null);
+      if (picked) matches = [picked];
+      nw.hidden = true; show(); return;
+    }
+    found.hidden = false; found.className = 'found bad';
+    found.textContent = /@.+\./.test(q) ? 'No AERA customer with that email.' : 'No customer matches \u201c' + em.value.trim() + '\u201d.';
+    nw.hidden = !/@.+\./.test(q);
+  });
   // Drop-down: every AERA customer, most recent first.
   const pick = $('cfPick'); let all = [];
   brainCall({ mode: 'tool', name: 'aera_customers', args: {} }).then((j) => {
