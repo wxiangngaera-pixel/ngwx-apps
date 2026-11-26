@@ -283,7 +283,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1835q';
+const NOVA_BUILD = 'b20261126-1850a';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1534,7 +1534,7 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 // ---------- Actions on this phone / Mac (always need Boss's tap) ----------
-const ACT_LABEL = { call: 'Call', whatsapp: 'WhatsApp', voice: 'WhatsApp voice note', sms: 'Message', email: 'Email', navigate: 'Navigate', calendar: 'Calendar event', reminder: 'Reminder (Calendar alert)', task: 'MinimaList task', claude: 'Hand to Claude', aera_order: 'AERA order \u00b7 draft' };
+const ACT_LABEL = { call: 'Call', whatsapp: 'WhatsApp', voice: 'WhatsApp voice note', sms: 'Message', email: 'Email', navigate: 'Navigate', calendar: 'Calendar event', reminder: 'Reminder (Calendar alert)', task: 'MinimaList task', claude: 'Hand to Claude', aera_order: 'AERA order \u00b7 draft', aera_change: 'Change in AERA' };
 function digits(p) { return String(p || '').replace(/[^\d]/g, ''); }
 function fmtWhen(iso) {
   if (!iso) return '';
@@ -1545,6 +1545,7 @@ function describe(a) {
   const who = [a.to_name, a.to].filter(Boolean).join(' · ') || 'choose contact';
   switch (a.type) {
     case 'call': return 'Call ' + who;
+    case 'aera_change': return (a.summary || 'Change an AERA record') + '\n' + a.source + ' \u00b7 ' + a.record_id + '\n' + Object.entries(a.set || {}).map(([k, v]) => k + ' \u2192 ' + (typeof v === 'object' ? JSON.stringify(v) : v)).join('\n') + '\nSigned in as you; nothing is deleted.';
     case 'voice': return 'Voice note to ' + who + '\nFrom: your WhatsApp (013-610 0205), in Nova\u2019s voice' + (a.text ? '\n\uD83C\uDFA4 \u201c' + a.text + '\u201d' : '');
     case 'whatsapp': return 'WhatsApp ' + who + (a.to ? '\nFrom: your WhatsApp (013-610 0205) — Nova sends it' : '\nOpens WhatsApp to pick the chat') + (a.text ? '\n“' + a.text + '”' : '');
     case 'sms': return 'Message ' + who + (a.text ? '\n“' + a.text + '”' : '');
@@ -1647,7 +1648,7 @@ function runAction(a) {
 }
 // WhatsApp with a number: Nova sends it itself (no phone app), after Boss confirms.
 // Nova sends WhatsApp only from Boss's own number (013-610 0205). If it isn't linked, it falls back to opening WhatsApp on his phone.
-function sentByNova(a) { return ((a.type === 'whatsapp' || a.type === 'voice') && !!a.to && !!a.text) || (a.type === 'calendar' && !!a.start); }
+function sentByNova(a) { return (a.type === 'aera_change' && !!a.source && !!a.record_id && !!a.set) || ((a.type === 'whatsapp' || a.type === 'voice') && !!a.to && !!a.text) || (a.type === 'calendar' && !!a.start); }
 // iCloud Calendar link (nova-icloud): add a confirmed event straight into his iPhone Calendar; refresh the copy Nova reads.
 async function icloud(body) {
   const { data: { session } } = await sb.auth.getSession();
@@ -1661,6 +1662,17 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 function icloudSync() { lastIcloudSync = Date.now(); icloud({ action: 'sync' }).then((j) => dbg('icloud sync ' + j.events), (e) => dbg('icloud sync err ' + e.message)); }
 async function sendByNova(entry) {
   const a = entry.a;
+  if (a.type === 'aera_change') {
+    entry.done('Changing\u2026');
+    try {
+      const { data, error } = await sb.functions.invoke('nova-brain', { body: { mode: 'execute', action: a } });
+      if (error) { let m = error.message; try { const b = await error.context?.json(); if (b?.error) m = b.error; } catch {} throw new Error(m); }
+      if (data.error) throw new Error(data.error);
+      entry.done('Changed \u2713 in AERA' + (data.after ? '\n' + Object.entries(data.after).map(([k, v]) => k + ': ' + JSON.stringify(data.before?.[k]) + ' \u2192 ' + JSON.stringify(v)).join('\n') : ''));
+      speak('Done, Boss.');
+    } catch (e) { entry.done('Not changed: ' + (e.message || e)); speak('Sorry Boss, that didn\u2019t go through.'); }
+    return;
+  }
   if (a.type === 'calendar') {
     entry.done('Adding\u2026');
     try {
