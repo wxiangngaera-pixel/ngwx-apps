@@ -267,7 +267,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1515h';
+const NOVA_BUILD = 'b20261126-1520h';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1723,7 +1723,7 @@ function customerForm() {
     if (!all.length) { timer = setTimeout(look, 450); return; }
     picked = null; matches = [];
     if (!q) { found.hidden = true; nw.hidden = true; return; }
-    const hits = all.filter((c) => (c.email || '').toLowerCase().includes(q) || (c.name || '').toLowerCase().includes(q) || (c.phone || '').replace(/\D/g, '').includes(q.replace(/\D/g, '') || '\u0000'));
+    const hits = all.filter((c) => String(c.email ?? '').toLowerCase().includes(q) || String(c.name ?? '').toLowerCase().includes(q) || String(c.phone ?? '').replace(/\D/g, '').includes(q.replace(/\D/g, '') || '\u0000'));
     hits.sort((x, y) => Number(!(x.email || '').toLowerCase().startsWith(q)) - Number(!(y.email || '').toLowerCase().startsWith(q)));
     if (hits.length) {
       matches = hits.slice(0, 8);
@@ -1741,6 +1741,7 @@ function customerForm() {
     all = (JSON.parse(j.output).customers || []);
     pick.innerHTML = ''; pick.add(new Option('Choose from ' + all.length + ' customers\u2026', ''));
     all.forEach((c, i) => pick.add(new Option((c.name || c.email) + ' \u2014 ' + c.email, String(i))));
+    if (em.value.trim()) em.dispatchEvent(new Event('input'));
   }).catch(() => { pick.innerHTML = '<option value="">Couldn\u2019t load the list \u2014 type the email</option>'; });
   pick.addEventListener('change', () => {
     const c = all[Number(pick.value)]; if (!c || pick.value === '') return;
