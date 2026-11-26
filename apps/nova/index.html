@@ -283,7 +283,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1720p';
+const NOVA_BUILD = 'b20261126-1750c';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1712,11 +1712,17 @@ function orderForm(pre) {
   setView('chat');
   if (!OF) {
     OF = { step: 0, email: '', name: '', phone: '', isNew: false, fulfil: '', addr1: '', addr2: '', postcode: '', city: '', state: 'Selangor', date: ofDate(2), slot: '', kind: 'meal', items: {}, picks: { copy: {}, plans: {}, cart: false }, cust: null, basis: '', spice: '', seas: '', pack: '', pay: '', spWhy: '', note: '', q: '', all: [], menu: null, ptext: '', pfile: null, plan: null, pbusy: false, perr: '' };
-    brainCall({ mode: 'tool', name: 'aera_customers', args: {} }).then((j) => { OF && (OF.all = JSON.parse(j.output).customers || []); ofDraw(); }).catch(() => {});
+    ofLoadAll(0);
     brainCall({ mode: 'tool', name: 'aera_menu_items', args: {} }).then((j) => { OF && (OF.menu = JSON.parse(j.output)); ofDraw(); }).catch(() => { OF && (OF.menu = { meals: [], bundles: [], err: 1 }); ofDraw(); });
   }
   if (pre) ofMerge(pre);
   ofDraw();
+}
+// the customer drop-down list; tries again if Nova's server is busy ( e.g. right after an update ) instead of staying on "Loading customers…"
+function ofLoadAll(n) {
+  if (!OF) return; const F = OF; F.allErr = 0;
+  brainCall({ mode: 'tool', name: 'aera_customers', args: {} }).then((j) => { const L = JSON.parse(j.output).customers || []; if (!L.length) throw new Error('empty'); F.all = L; if (OF === F) ofDraw(); })
+    .catch(() => { if (OF !== F) return; if (n < 3) setTimeout(() => ofLoadAll(n + 1), 1500 * (n + 1)); else { F.allErr = 1; ofDraw(); } });
 }
 function ofMerge(a) {
   const F = OF; if (!a) return;
@@ -1788,9 +1794,10 @@ function ofDraw() {
   const T = ['Who is this order for?', 'Phone number', 'Delivery or Self Pick-Up?', 'Meal Plan', 'Packaging', 'Payment', 'Submit order to Kitchen?'];
   let b = '';
   if (F.step === 0) {
-    b = '<label for="ofPick">Choose a customer</label><select class="field" id="ofPick"><option value="">' + (F.all.length ? 'Choose from ' + F.all.length + ' customers…' : 'Loading customers…') + '</option>' +
+    b = '<label for="ofPick">Choose a customer</label><select class="field" id="ofPick"><option value="">' + (F.all.length ? 'Choose from ' + F.all.length + ' customers…' : F.allErr ? 'Couldn’t load customers' : 'Loading customers…') + '</option>' +
       F.all.map((c, i) => '<option value="' + i + '"' + (c.email === F.email ? ' selected' : '') + '>' + ofEsc((c.name || c.email) + ' — ' + c.email) + '</option>').join('') + '</select>' +
       '<label for="ofEm">Or type their email</label><input class="field" id="ofEm" type="email" inputmode="email" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="name@gmail.com" value="' + ofEsc(F.q || F.email) + '">' +
+      (F.allErr && !F.all.length ? '<button type="button" class="btn ghost" id="ofRetry" style="min-height:38px;font-size:13px">Couldn’t load the customer list · Try again</button>' : '') +
       '<div class="found" id="ofHits" hidden></div>' +
       (F.isNew ? '<div class="note">New customer — add their name:</div><input class="field" id="ofName" autocomplete="off" placeholder="Name" value="' + ofEsc(F.name) + '">' : (F.email && F.name ? '<div class="found">✓ ' + ofEsc(F.name) + ' · ' + ofEsc(F.email) + '</div>' : ''));
   } else if (F.step === 1) {
@@ -1893,6 +1900,10 @@ function ofWire(w) {
         else { hits.className = 'found bad'; hits.textContent = 'No customer matches “' + em.value.trim() + '”.'; }
       }
     };
+    // tapping the empty box shows the latest customers straight away
+    em.onfocus = () => { if (em.value.trim() || !F.all.length) return; hits.hidden = false; hits.className = 'found'; hits.innerHTML = '';
+      for (const c of F.all.slice(0, 8)) { const bt = document.createElement('button'); bt.type = 'button'; bt.style.whiteSpace = 'pre-line';
+        bt.textContent = (c.name || c.email) + (c.phone ? ' · ' + c.phone : '') + '\n' + c.email; bt.onclick = () => { ofPick(c); ofDraw(); }; hits.appendChild(bt); } };
     if (!F.email) setTimeout(() => em.focus(), 50);
   }
   if ($$('#ofPt')) $$('#ofPt').oninput = (e) => { F.ptext = e.target.value; err(''); };
@@ -1904,6 +1915,7 @@ function ofWire(w) {
     const rd = new FileReader(); rd.onload = () => { F.pfile = { b64: String(rd.result).split(',')[1], mime: f.type, name: f.name }; ofDraw(); }; rd.readAsDataURL(f); };
   if ($$('#ofPx')) $$('#ofPx').onclick = () => { F.pfile = null; ofDraw(); };
   w.querySelectorAll('[data-pdel]').forEach((bt) => bt.onclick = () => { const P = F.plan; P.meals.splice(+bt.dataset.pdel, 1); ofPlanSum(P); ofDraw(); });
+  if ($$('#ofRetry')) $$('#ofRetry').onclick = () => { F.allErr = 0; ofDraw(); ofLoadAll(0); };
   if ($$('#ofGo')) $$('#ofGo').onclick = () => ofSubmit();
   if ($$('#ofDraft')) $$('#ofDraft').onclick = () => ofSubmit(true);
 }
