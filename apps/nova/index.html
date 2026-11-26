@@ -90,6 +90,11 @@
   .schips{display:flex;gap:6px;margin:4px 0 10px}
   .schips button{padding:6px 14px;border-radius:999px;border:1px solid var(--line);background:none;color:var(--muted);font:inherit;font-size:13px;cursor:pointer}
   .schips button.on{border-color:var(--orange);color:var(--orange)}
+  .padd{border:1px solid var(--ring2);border-radius:14px;padding:12px;margin-bottom:14px;display:flex;flex-direction:column;gap:8px}
+  .padd input{width:100%;box-sizing:border-box;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit;font-size:15px}
+  .padd .found{border-radius:10px;padding:10px;font-size:14px;background:rgba(80,200,120,.12);color:#7fd8a0}
+  .padd .found.bad{background:rgba(255,120,80,.12);color:var(--orange)}
+  .padd .found a{color:inherit}
   .sadd{display:flex;gap:8px;align-items:flex-end;margin-bottom:12px}
   .sadd button{min-width:48px;min-height:44px;border-radius:12px;border:0;background:var(--purple);color:#fff;font-size:20px;cursor:pointer}
   .slist{display:flex;flex-direction:column;gap:8px}
@@ -236,7 +241,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1225v';
+const NOVA_BUILD = 'b20261126-1222p';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1853,17 +1858,79 @@ async function renderContacts() {
   body.appendChild(list);
 }
 function normalizePhone(raw) { let d = String(raw || '').replace(/\D/g, ''); if (d.startsWith('0')) d = '6' + d; if (d.startsWith('1') && d.length <= 10) d = '60' + d; return d.length >= 10 ? '+' + d : ''; }
+// Type a place in: an address, or a Google Maps / Waze link. Looked up free in the browser (OpenStreetMap), saved only after Boss taps Save.
+function coordsFromLink(t) {
+  const pats = [/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/, /@(-?\d+\.\d+),(-?\d+\.\d+)/, /[?&](?:q|ll|query|destination|daddr|center)=(-?\d+\.\d+)(?:,|%2C)\s*(-?\d+\.\d+)/i, /^\s*(-?\d{1,2}\.\d+)\s*,\s*(-?\d{2,3}\.\d+)\s*$/];
+  for (const re of pats) { const m = t.match(re); if (m) { const lat = +m[1], lng = +m[2]; if (Math.abs(lat) <= 90 && Math.abs(lng) <= 180) return { lat, lng }; } }
+  return null;
+}
+function osmLabel(d) {
+  const a = d.address || {};
+  const s = [d.name && d.name !== a.road ? d.name : '', a.house_number && a.road ? a.house_number + ' ' + a.road : a.road, a.neighbourhood || a.suburb || a.quarter, a.city || a.town || a.village || a.city_district, a.state].filter(Boolean).filter((v, i, x) => x.indexOf(v) === i).join(', ');
+  return s || d.display_name || '';
+}
+async function findPlace(q) {
+  const OSM = 'https://nominatim.openstreetmap.org/';
+  const c = coordsFromLink(q);
+  if (c) {
+    const d = await fetch(OSM + 'reverse?format=jsonv2&zoom=18&addressdetails=1&accept-language=en&lat=' + c.lat + '&lon=' + c.lng).then((r) => r.ok ? r.json() : null).catch(() => null);
+    return { ...c, address: d ? osmLabel(d) : c.lat.toFixed(5) + ', ' + c.lng.toFixed(5) };
+  }
+  if (/^https?:\/\//i.test(q.trim())) return { error: /goo\.gl|maps\.app/i.test(q) ? 'Short share links can\u2019t be read. In Google Maps, tap the place, copy its address, and paste that here instead.' : 'Couldn\u2019t read a location from that link. Paste the address instead.' };
+  const d = await fetch(OSM + 'search?format=jsonv2&limit=1&addressdetails=1&accept-language=en&countrycodes=my&q=' + encodeURIComponent(q)).then((r) => r.ok ? r.json() : null).catch(() => null);
+  if (!d) return { error: 'Couldn\u2019t reach the map search. Check your internet and try again.' };
+  if (!d[0]) return { error: 'Couldn\u2019t find that. Add more detail (area, city), or paste a Google Maps link.' };
+  return { lat: +d[0].lat, lng: +d[0].lon, address: osmLabel(d[0]) };
+}
+function placeAddForm() {
+  const box = sel('div', 'padd');
+  box.appendChild(sel('div', 'sec', '+ ADD A PLACE'));
+  const nm = sel('input'); nm.placeholder = 'Name, e.g. AERA kitchen'; nm.setAttribute('aria-label', 'Place name');
+  const ad = sel('input'); ad.placeholder = 'Address, or paste a Google Maps / Waze link'; ad.setAttribute('aria-label', 'Address or link');
+  const out = sel('div'); const row = sel('div'); row.style.cssText = 'display:flex;gap:8px';
+  const find = sel('button', 'btn', 'Find it'); find.type = 'button'; find.style.flex = '1';
+  let hit = null;
+  const reset = () => { hit = null; out.innerHTML = ''; row.innerHTML = ''; row.appendChild(find); };
+  ad.addEventListener('input', reset);
+  find.onclick = async () => {
+    const q = ad.value.trim(); if (!q) { ad.focus(); return; }
+    find.disabled = true; find.textContent = 'Finding\u2026';
+    const r = await findPlace(q); find.disabled = false; find.textContent = 'Find it';
+    out.innerHTML = '';
+    if (r.error) { out.appendChild(sel('div', 'found bad', r.error)); return; }
+    hit = r;
+    const f = sel('div', 'found'); f.appendChild(sel('div', '', '\u{1F4CD} Found: ' + r.address));
+    const m = sel('a', '', 'Check on map'); m.href = 'https://www.google.com/maps?q=' + r.lat + ',' + r.lng; m.target = '_blank'; m.rel = 'noopener';
+    m.style.cssText = 'display:inline-block;margin-top:6px;font-size:13px'; f.appendChild(m); out.appendChild(f);
+    row.innerHTML = '';
+    const no = sel('button', 'btn ghost', 'Cancel'); no.type = 'button'; no.style.flex = '1'; no.onclick = () => { ad.value = ''; nm.value = ''; reset(); };
+    const ok = sel('button', 'btn', 'Save place'); ok.type = 'button'; ok.style.flex = '1';
+    ok.onclick = async () => {
+      const name = nm.value.trim(); if (!name) { nm.focus(); nm.placeholder = 'Give it a name first'; return; }
+      ok.disabled = true;
+      const { error } = await sb.from('nova_places').upsert({ name: name.slice(0, 80), lat: hit.lat, lng: hit.lng, address: hit.address || null }, { onConflict: 'user_id,name' });
+      if (error) { ok.disabled = false; addMsg('err', 'Couldn\u2019t save the place: ' + error.message); return; }
+      dbg('place typed ' + name); renderPlaces();
+    };
+    row.append(no, ok);
+  };
+  reset();
+  box.append(nm, ad, out, row);
+  return box;
+}
 async function renderPlaces() {
   setHead('Places', true);
   const body = $('setBody'); body.innerHTML = '';
+  body.appendChild(placeAddForm());
   const { data } = await sb.from('nova_places').select('id,name,address').order('name');
   const list = sel('div', 'slist');
   (data || []).forEach((p) => list.appendChild(itemCard(p.name, p.address || '',
     async ([name]) => { const { error } = await sb.from('nova_places').update({ name }).eq('id', p.id); return error ? null : { text: name, sub: p.address || '' }; },
     () => sb.from('nova_places').delete().eq('id', p.id),
     [{ label: 'Place name', value: p.name, required: true }])));
-  if (!(data || []).length) list.appendChild(sel('div', 'note', 'No places yet. Stand somewhere and tell Nova "save this place as AERA kitchen".'));
+  if (!(data || []).length) list.appendChild(sel('div', 'note', 'No places yet. Add one above, or stand there and tell Nova "save this place as AERA kitchen".'));
   body.appendChild(list);
+  if ((data || []).length) { const n = sel('div', 'note', 'Or stand there and tell Nova "save this place as \u2026".'); n.style.marginTop = '10px'; body.appendChild(n); }
 }
 // A prepared message changed in Settings: its old card on the main screen must never be confirmable.
 let queueRefresh = false;
