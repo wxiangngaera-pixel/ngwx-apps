@@ -241,7 +241,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1222p';
+const NOVA_BUILD = 'b20261126-1230p';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -886,7 +886,12 @@ async function onLive(me, ev) {
 
 // The live voice's tools. Actions never run unless Boss himself said "confirm" (or taps Confirm).
 async function liveTool(me, name, args) {
-  if (name === 'prepare_action') { showAction(args); return { ok: true, note: 'Card shown. Read it back in one short sentence and ask "Confirm?". Nothing happens until he confirms.' }; }
+  if (name === 'prepare_action') {
+    if (args && args.type === 'navigate' && typeof args.lat !== 'number' && args.place) {
+      // Saved place: go to its exact saved spot, not a text search of the name.
+      try { const { data } = await sb.from('nova_places').select('name,lat,lng').ilike('name', String(args.place).trim().replace(/[%_,()"]/g, '')).limit(1); if (data?.[0]) args = { ...args, place: data[0].name, lat: data[0].lat, lng: data[0].lng }; } catch {}
+    }
+    showAction(args); return { ok: true, note: 'Card shown. Read it back in one short sentence and ask "Confirm?". Nothing happens until he confirms.' }; }
   if (name === 'end_call') { setTimeout(() => { if (live === me) liveStop('Live call ended'); }, 1800); return { ok: true }; }
   if (name === 'cancel_action') { if (pendingAction && !pendingAction.settled) pendingAction.cancel(); pendingAction = null; return { ok: true }; }
   if (name === 'confirm_action') {
