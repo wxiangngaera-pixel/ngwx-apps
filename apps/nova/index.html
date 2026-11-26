@@ -77,6 +77,22 @@
   [hidden]{display:none!important}
   .vsheet{position:fixed;inset:0;background:var(--bg);z-index:50;overflow-y:auto;-webkit-overflow-scrolling:touch}
   .vsheet .in{max-width:480px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 16px) 16px 40px}
+  .srow{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;padding:13px 14px;background:none;border:0;border-bottom:1px solid var(--line);color:var(--text);font:inherit;font-size:15px;text-align:left;cursor:pointer;min-height:48px}
+  .sgroup{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .sgroup .srow:last-child{border-bottom:0}
+  .srow .v{color:var(--muted);font-size:14px;white-space:nowrap}
+  .sitem{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;font-size:14px;line-height:1.45}
+  .sitem .acts{display:flex;gap:14px;justify-content:flex-end}
+  .sitem .acts button,.sback{background:none;border:0;color:var(--purple-text);font:inherit;font-size:14px;cursor:pointer;min-height:36px;padding:0}
+  .sitem .acts .del{color:var(--muted)}
+  .sitem .acts .del.armed{color:#FF5C5C;font-weight:600}
+  .sitem textarea,.sitem input,.sadd textarea{width:100%;box-sizing:border-box;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit;font-size:15px}
+  .schips{display:flex;gap:6px;margin:4px 0 10px}
+  .schips button{padding:6px 14px;border-radius:999px;border:1px solid var(--line);background:none;color:var(--muted);font:inherit;font-size:13px;cursor:pointer}
+  .schips button.on{border-color:var(--orange);color:var(--orange)}
+  .sadd{display:flex;gap:8px;align-items:flex-end;margin-bottom:12px}
+  .sadd button{min-width:48px;min-height:44px;border-radius:12px;border:0;background:var(--purple);color:#fff;font-size:20px;cursor:pointer}
+  .slist{display:flex;flex-direction:column;gap:8px}
   .vsheet .sec{font-size:11px;letter-spacing:1.5px;color:var(--orange);margin:18px 0 8px}
   .vgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
   .vcard{border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;background:var(--card);color:var(--text);font:inherit;text-align:left}
@@ -92,7 +108,8 @@
   <div class="top">
     <div class="brand">NOVA</div>
     <div style="display:flex;gap:4px;align-items:center">
-      <button class="link" id="locBtn" hidden>📍 Location: off</button>
+      <button class="link" id="locBtn" hidden aria-label="Location" style="font-size:18px;min-width:40px">📍</button>
+      <button class="link" id="settingsBtn" hidden aria-label="Settings" style="font-size:20px;min-width:40px">⚙︎</button>
       <button class="link" id="voicePickBtn" hidden>Voice</button>
       <button class="link" id="linkWaBtn" hidden>Link WhatsApp</button>
       <button class="link" id="contactsBtn" hidden>Contacts</button>
@@ -179,6 +196,17 @@
   </section>
 </div>
 
+<section class="vsheet" id="settingsSheet" hidden aria-label="Nova settings">
+  <div class="in">
+    <div style="display:flex;justify-content:space-between;align-items:center;min-height:44px">
+      <button class="sback" id="setBack" hidden>‹ Settings</button>
+      <div style="font-size:20px;font-weight:600" id="setTitle">Settings</div>
+      <button class="link" id="setDone">Done</button>
+    </div>
+    <div id="setBody"></div>
+  </div>
+</section>
+
 <section class="vsheet" id="voiceSheet" hidden aria-label="Nova's voice">
   <div class="in">
     <div style="display:flex;justify-content:space-between;align-items:center">
@@ -207,7 +235,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1120';
+const NOVA_BUILD = 'b20261126-1215';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -236,12 +264,14 @@ async function showScreen() {
   const { data: { session } } = await sb.auth.getSession();
   $('login').hidden = !!session;
   $('main').hidden = !session;
-  $('signout').hidden = !session;
+  // Clean top bar: only Location and Settings. The other buttons stay in the page (hidden) and are opened from Settings.
+  $('signout').hidden = true;
   $('voiceBtn').hidden = true; // voice lock parked
-  $('contactsBtn').hidden = !session;
-  $('linkWaBtn').hidden = !session;
-  $('voicePickBtn').hidden = !session;
+  $('contactsBtn').hidden = true;
+  $('linkWaBtn').hidden = true;
+  $('voicePickBtn').hidden = true;
   $('locBtn').hidden = !session;
+  $('settingsBtn').hidden = !session;
   if (session && locOn()) refreshLoc();
   if (session) { loadVoiceProfile(); loadHistory().finally(() => setTimeout(showQueue, 300)); }
   if (session) {
@@ -387,7 +417,12 @@ function saveExchange(q, a) {
 // ---------- Location (Boss's phone GPS; only when he switches it on; never stored, only sent with a question) ----------
 let lastLoc = null, locPending = null;
 function locOn() { return localStorage.getItem('novaLoc') === 'on'; }
-function showLoc() { const b = $('locBtn'); if (!b) return; b.textContent = '\uD83D\uDCCD Location: ' + (locOn() ? 'on' : 'off'); b.style.color = locOn() ? 'var(--orange)' : ''; }
+function showLoc() {
+  const b = $('locBtn'); if (!b) return;
+  b.style.opacity = locOn() ? '1' : '0.35'; b.title = 'Location ' + (locOn() ? 'on' : 'off');
+  b.setAttribute('aria-pressed', locOn() ? 'true' : 'false');
+  if (typeof renderSettingsHome === 'function' && !$('settingsSheet').hidden) renderSettingsHome();
+}
 function refreshLoc() {
   if (!locOn() || !navigator.geolocation) return Promise.resolve(null);
   if (locPending) return locPending;
@@ -1334,6 +1369,11 @@ async function sendByNova(entry) {
   const a = entry.a;
   entry.done('Sending\u2026');
   try {
+    // A prepared message must still be waiting and unchanged (it may have been edited or cancelled in Settings).
+    if (entry.qid) {
+      const { data: row } = await sb.from('nova_queue').select('status,action').eq('id', entry.qid).single();
+      if (!row || row.status !== 'waiting' || (row.action || {}).text !== a.text) { entry.done('Not sent \u2014 this message was changed or cancelled. Use the latest card.'); return; }
+    }
     const { data, error } = await sb.functions.invoke('nova-brain', { body: { mode: 'execute', action: a, voice: localStorage.getItem('novaLiveVoice') || 'marin' } });
     if (error) { let m = error.message; try { const b = await error.context?.json(); if (b?.error) m = b.error; } catch {} throw new Error(m); }
     if (data.error) throw new Error(data.error);
@@ -1371,6 +1411,7 @@ function showAction(a, q) {
   no.addEventListener('click', () => { entry.cancel(); pendingAction = null; });
   yes.addEventListener('click', () => { entry.confirm(); pendingAction = null; });
   pendingAction = entry;
+  if (q) queueEntries.set(q.id, entry);
   row.append(no, yes);
   card.append(k, d);
   if (a.type === 'voice' && a.text) {
@@ -1564,6 +1605,7 @@ if (alwaysOn) {
 
 // ---------- Prepared messages waiting for Boss's confirm (one at a time; a follow-up shows only after the one before it is sent) ----------
 const queueShown = new Set();
+const queueEntries = new Map();
 async function queueMark(id, status) { try { await sb.from('nova_queue').update({ status, done_at: new Date().toISOString() }).eq('id', id); } catch {} }
 async function showQueue() {
   try {
@@ -1579,6 +1621,159 @@ async function showQueue() {
     setState(null, next.readback || 'Tap Confirm or Cancel');
     speak(next.readback || 'Ready, Boss. Confirm?');
   } catch (e) { dbg('queue error ' + e); }
+}
+
+// ---------- ⚙ Settings hub: what Nova knows (facts, contacts, places), waiting messages, and Nova's own settings ----------
+const BIZ = { aera: 'AERA', alphas: 'Alphas', personal: 'Personal' };
+let setBiz = 'aera';
+function sel(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function setHead(title, back) { $('setTitle').textContent = title; $('setBack').hidden = !back; }
+async function openSettings() { $('settingsSheet').hidden = false; await renderSettingsHome(); }
+function closeSettings() { $('settingsSheet').hidden = true; if (queueRefresh) { queueRefresh = false; showQueue(); } }
+$('settingsBtn').addEventListener('click', openSettings);
+$('setDone').addEventListener('click', closeSettings);
+$('setBack').addEventListener('click', renderSettingsHome);
+function row(icon, label, value, onClick, color) {
+  const b = sel('button', 'srow'); b.type = 'button';
+  b.appendChild(sel('span', '', icon + '  ' + label));
+  const v = sel('span', 'v', value); if (color) v.style.color = color; b.appendChild(v);
+  b.addEventListener('click', onClick); return b;
+}
+async function count(table, filter) {
+  let q = sb.from(table).select('id', { count: 'exact', head: true });
+  if (filter) q = filter(q);
+  const { count: n } = await q; return n ?? 0;
+}
+async function renderSettingsHome() {
+  setHead('Settings', false);
+  const body = $('setBody'); body.innerHTML = '';
+  const [nf, nc, np, nq] = await Promise.all([count('nova_facts'), count('nova_contacts'), count('nova_places'), count('nova_queue', (q) => q.eq('status', 'waiting'))]).catch(() => [0, 0, 0, 0]);
+  body.appendChild(sel('div', 'sec', 'WHAT NOVA KNOWS'));
+  const g1 = sel('div', 'sgroup');
+  g1.append(row('📝', 'Facts and rules', nf + ' ›', renderFacts), row('👤', 'Contacts', nc + ' ›', renderContacts), row('📍', 'Places', np + ' ›', renderPlaces));
+  body.appendChild(g1);
+  body.appendChild(sel('div', 'sec', 'WAITING FOR YOU'));
+  const g2 = sel('div', 'sgroup');
+  g2.append(row('📤', 'Prepared messages', nq + ' ›', renderWaiting, nq ? 'var(--orange)' : ''));
+  body.appendChild(g2);
+  body.appendChild(sel('div', 'sec', 'NOVA'));
+  const g3 = sel('div', 'sgroup');
+  const v = localStorage.getItem('novaLiveVoice') || 'marin';
+  g3.append(
+    row('🔊', 'Voice', v.charAt(0).toUpperCase() + v.slice(1) + ' ›', () => { closeSettings(); $('voicePickBtn').click(); }),
+    row('📍', 'Location', locOn() ? 'On' : 'Off', () => $('locBtn').click(), locOn() ? 'var(--orange)' : ''),
+    row('💬', 'WhatsApp (013-610 0205)', 'Link ›', () => { closeSettings(); $('linkWaBtn').click(); }),
+  );
+  body.appendChild(g3);
+  const so = sel('button', 'srow', 'Sign out'); so.type = 'button'; so.style.justifyContent = 'center'; so.style.color = 'var(--muted)';
+  so.addEventListener('click', () => { closeSettings(); $('signout').click(); });
+  const g4 = sel('div', 'sgroup'); g4.style.marginTop = '22px'; g4.appendChild(so); body.appendChild(g4);
+}
+// An item card with Edit / Delete (delete needs a second tap, no pop-ups).
+function itemCard(text, sub, onSave, onDelete, fields, delLabel = 'Delete') {
+  const c = sel('div', 'sitem');
+  const show = () => {
+    c.innerHTML = '';
+    c.appendChild(sel('div', '', text));
+    if (sub) { const s = sel('div', '', sub); s.style.cssText = 'color:var(--muted);font-size:13px'; c.appendChild(s); }
+    const a = sel('div', 'acts');
+    const e = sel('button', '', 'Edit'); e.type = 'button'; e.onclick = edit;
+    const d = sel('button', 'del', delLabel); d.type = 'button';
+    d.onclick = async () => {
+      if (!d.classList.contains('armed')) { d.classList.add('armed'); d.textContent = 'Tap again to delete'; setTimeout(() => { d.classList.remove('armed'); d.textContent = delLabel; }, 3000); return; }
+      await onDelete(); c.remove();
+    };
+    a.append(e, d); c.appendChild(a);
+  };
+  const edit = () => {
+    c.innerHTML = '';
+    const ins = fields.map((f) => { const i = f.multi ? sel('textarea') : sel('input'); if (f.multi) i.rows = 3; i.value = f.value || ''; i.placeholder = f.label; c.appendChild(i); return i; });
+    const a = sel('div', 'acts');
+    const x = sel('button', 'del', 'Cancel'); x.type = 'button'; x.onclick = show;
+    const s = sel('button', '', 'Save'); s.type = 'button';
+    s.onclick = async () => { const vals = ins.map((i) => i.value.trim()); if (vals.some((v, k) => fields[k].required && !v)) return; const r = await onSave(vals); if (r) { text = r.text; sub = r.sub; fields.forEach((f, k) => f.value = vals[k]); } show(); };
+    a.append(x, s); c.appendChild(a); ins[0].focus();
+  };
+  show(); return c;
+}
+async function renderFacts() {
+  setHead('Facts and rules', true);
+  const body = $('setBody'); body.innerHTML = '';
+  const chips = sel('div', 'schips');
+  Object.entries(BIZ).forEach(([k, label]) => { const b = sel('button', k === setBiz ? 'on' : '', label); b.type = 'button'; b.onclick = () => { setBiz = k; renderFacts(); }; chips.appendChild(b); });
+  body.appendChild(chips);
+  const add = sel('div', 'sadd'); const ta = sel('textarea'); ta.rows = 2; ta.placeholder = 'Add a fact for ' + BIZ[setBiz] + '…';
+  const plus = sel('button', '', '+'); plus.type = 'button'; plus.setAttribute('aria-label', 'Add fact');
+  plus.onclick = async () => { const t = ta.value.trim(); if (!t) return; const { error } = await sb.from('nova_facts').insert({ biz: setBiz, text: t }); if (error) { addMsg('err', 'Couldn’t save: ' + error.message); return; } dbg('fact add ' + setBiz); renderFacts(); };
+  add.append(ta, plus); body.appendChild(add);
+  const { data } = await sb.from('nova_facts').select('id,text').eq('biz', setBiz).order('created_at');
+  body.appendChild(sel('div', 'sec', BIZ[setBiz].toUpperCase() + ' · ' + (data || []).length + ' FACT' + ((data || []).length === 1 ? '' : 'S')));
+  const list = sel('div', 'slist');
+  (data || []).forEach((f) => list.appendChild(itemCard(f.text, '', async ([t]) => { const { error } = await sb.from('nova_facts').update({ text: t, updated_at: new Date().toISOString() }).eq('id', f.id); return error ? null : { text: t }; }, () => sb.from('nova_facts').delete().eq('id', f.id), [{ label: 'Fact', value: f.text, multi: true, required: true }])));
+  if (!(data || []).length) list.appendChild(sel('div', 'note', 'Nothing yet. Add what Nova should always know about ' + BIZ[setBiz] + '.'));
+  body.appendChild(list);
+  const n = sel('div', 'note', setBiz === 'aera' ? 'Menu, prices and offers stay live from AERA, so you never type them here. AERA facts are also used for proposal reviews.' : setBiz === 'alphas' ? 'Alphas facts are only used for property questions, never mixed with AERA.' : 'Personal facts are for anything outside the two businesses.');
+  n.style.marginTop = '12px'; body.appendChild(n);
+}
+async function renderContacts() {
+  setHead('Contacts', true);
+  const body = $('setBody'); body.innerHTML = '';
+  const imp = sel('button', 'btn ghost', 'Import from iPhone (.vcf)'); imp.type = 'button'; imp.style.width = '100%'; imp.style.marginBottom = '12px';
+  imp.onclick = () => $('contactsBtn').click();
+  body.appendChild(imp);
+  const { data } = await sb.from('nova_contacts').select('id,alias,name,phone').order('alias');
+  const list = sel('div', 'slist');
+  (data || []).forEach((c) => list.appendChild(itemCard(c.alias + (c.name && c.name !== c.alias ? ' — ' + c.name : ''), c.phone,
+    async ([alias, phone]) => { const ph = normalizePhone(phone); if (!ph) { addMsg('err', 'That number doesn’t look right.'); return null; } const { error } = await sb.from('nova_contacts').update({ alias, phone: ph }).eq('id', c.id); return error ? null : { text: alias + (c.name && c.name !== alias ? ' — ' + c.name : ''), sub: ph }; },
+    () => sb.from('nova_contacts').delete().eq('id', c.id),
+    [{ label: 'Name Nova knows them by', value: c.alias, required: true }, { label: 'Phone', value: c.phone, required: true }])));
+  if (!(data || []).length) list.appendChild(sel('div', 'note', 'No contacts yet. Import from iPhone, or tell Nova "save Ah Mei 016…".'));
+  body.appendChild(list);
+}
+function normalizePhone(raw) { let d = String(raw || '').replace(/\D/g, ''); if (d.startsWith('0')) d = '6' + d; if (d.startsWith('1') && d.length <= 10) d = '60' + d; return d.length >= 10 ? '+' + d : ''; }
+async function renderPlaces() {
+  setHead('Places', true);
+  const body = $('setBody'); body.innerHTML = '';
+  const { data } = await sb.from('nova_places').select('id,name,address').order('name');
+  const list = sel('div', 'slist');
+  (data || []).forEach((p) => list.appendChild(itemCard(p.name, p.address || '',
+    async ([name]) => { const { error } = await sb.from('nova_places').update({ name }).eq('id', p.id); return error ? null : { text: name, sub: p.address || '' }; },
+    () => sb.from('nova_places').delete().eq('id', p.id),
+    [{ label: 'Place name', value: p.name, required: true }])));
+  if (!(data || []).length) list.appendChild(sel('div', 'note', 'No places yet. Stand somewhere and tell Nova "save this place as AERA kitchen".'));
+  body.appendChild(list);
+}
+// A prepared message changed in Settings: its old card on the main screen must never be confirmable.
+let queueRefresh = false;
+function retireQueueCard(qid, why) {
+  const e = queueEntries.get(qid);
+  if (e && !e.settled) { e.settled = true; e.done(why); }
+  if (pendingAction && pendingAction.qid === qid) pendingAction = null;
+  queueEntries.delete(qid);
+}
+async function renderWaiting() {
+  setHead('Prepared messages', true);
+  const body = $('setBody'); body.innerHTML = '';
+  const { data } = await sb.from('nova_queue').select('id,action,readback,after_id').eq('status', 'waiting').order('created_at');
+  const list = sel('div', 'slist');
+  (data || []).forEach((q) => {
+    const a = q.action || {};
+    const label = (a.type === 'voice' ? '🎤 Voice note to ' : '💬 WhatsApp to ') + (a.to_name || a.to || '?') + (q.after_id ? ' (after the one above is sent)' : '');
+    const card = itemCard(label, a.text || '',
+      async ([t]) => {
+        const na = { ...a, text: t };
+        const { error } = await sb.from('nova_queue').update({ action: na }).eq('id', q.id);
+        if (error) return null;
+        a.text = t; retireQueueCard(q.id, 'Edited \u2014 the new version is below'); queueShown.delete(q.id); queueRefresh = true;
+        return { text: label, sub: t };
+      },
+      async () => { await sb.from('nova_queue').update({ status: 'cancelled', done_at: new Date().toISOString() }).eq('id', q.id); retireQueueCard(q.id, 'Cancelled'); },
+      [{ label: 'Message', value: a.text, multi: true, required: true }], 'Cancel message');
+    list.appendChild(card);
+  });
+  if (!(data || []).length) list.appendChild(sel('div', 'note', 'Nothing waiting.'));
+  body.appendChild(list);
+  const n = sel('div', 'note', 'To send, tap Confirm on its card on the main screen. Nothing is sent from here.'); n.style.marginTop = '12px'; body.appendChild(n);
 }
 
 // ---------- 📎 Attach + review (proposals, documents, screenshots) ----------
