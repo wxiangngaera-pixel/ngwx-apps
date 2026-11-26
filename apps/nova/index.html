@@ -241,7 +241,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1230p';
+const NOVA_BUILD = 'b20261126-1232t';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -902,8 +902,8 @@ async function liveTool(me, name, args) {
     while (id && me.heard[id] === undefined && Date.now() - t0 < 2500) await new Promise((r) => setTimeout(r, 100));
     const said = (id && me.heard[id]) || '';
     if (!said || NO.test(said) || !YES.test(said)) return { error: 'Boss has not clearly said confirm. Ask him to say "confirm".' };
-    pendingAction = null; entry.confirm();
-    return { ok: true, note: sentByNova(entry.a) ? 'Nova is sending it now. Say it is on the way.' : 'It is opening on his phone now.' };
+    pendingAction = null; entry.confirm(true);
+    return { ok: true, note: sentByNova(entry.a) ? 'Nova is sending it now. Say it is on the way.' : 'Not done yet: his iPhone needs one tap. Tell him in one short sentence to tap the orange "Open ' + appName(entry.a) + ' now" button. Do not say it is added or done.' };
   }
   const j = await brainCall({ mode: 'tool', name, args, loc: ['where_am_i', 'distance_to', 'save_place'].includes(name) ? await locForQuestion() : null });
   return j.output;
@@ -1397,6 +1397,7 @@ function icsEsc(t) { return String(t || '').replace(/[\\,;]/g, (m) => '\\' + m).
 // True once his "Nova Calendar Sync" Shortcut has sent the calendar at least once (so his Shortcuts are set up).
 var calShortcutReady = false;
 async function checkCalShortcut() { try { const { count } = await sb.from('nova_calendar').select('id', { count: 'exact', head: true }).eq('source', 'sync'); calShortcutReady = (count || 0) > 0 || localStorage.getItem('novaCalShortcut') === 'on'; if (calShortcutReady) localStorage.setItem('novaCalShortcut', 'on'); } catch {} }
+function appName(a) { return a.type === 'navigate' ? ({ google: 'Google Maps', apple: 'Apple Maps' }[a.app] || 'Waze') : ({ task: 'MinimaList', claude: 'Claude', call: 'Phone', sms: 'Messages', email: 'Mail', whatsapp: 'WhatsApp', voice: 'WhatsApp', calendar: 'Calendar', reminder: 'Calendar' }[a.type] || 'it'); }
 function mapsApp() { return localStorage.getItem('novaMapsApp') === 'google' ? 'google' : 'waze'; }
 function isApplePhone() { return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
 // KL-time date and time for a +08:00 ISO string, as MinimaList wants them (yyyy-mm-dd, HH:mm).
@@ -1530,7 +1531,18 @@ function showAction(a, q) {
   const done = (txt) => { row.remove(); k.textContent = txt; card.style.borderColor = 'var(--line)'; };
   const entry = { a, done, card, settled: false, qid: q ? q.id : null };
   entry.cancel = () => { if (entry.settled) return; entry.settled = true; done('Cancelled'); if (entry.qid) queueMark(entry.qid, 'cancelled'); };
-  entry.confirm = () => { if (entry.settled) return; entry.settled = true; if (sentByNova(a)) { sendByNova(entry); return; } done('Confirmed \u2014 opened on this device'); runAction(a); };
+  entry.confirm = (byVoice) => {
+    if (entry.settled) return; entry.settled = true;
+    if (sentByNova(a)) { sendByNova(entry); return; }
+    if (!byVoice) { done('Confirmed \u2014 opened on this device'); runAction(a); return; }
+    // Confirmed by voice: iPhone only lets a page open another app straight after a tap, so give him one big button to tap.
+    done('Confirmed by voice \u2014 tap below to open ' + appName(a));
+    const go = document.createElement('button'); go.type = 'button'; go.className = 'btn';
+    go.style.cssText = 'width:100%;background:var(--orange);margin-top:2px'; go.textContent = 'Open ' + appName(a) + ' now';
+    go.addEventListener('click', () => { runAction(a); go.textContent = 'Opened \u2713 (tap again if it didn\u2019t)'; });
+    card.appendChild(go); go.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    if (!isApplePhone()) { try { runAction(a); } catch {} }
+  };
   no.addEventListener('click', () => { entry.cancel(); pendingAction = null; });
   yes.addEventListener('click', () => { entry.confirm(); pendingAction = null; });
   pendingAction = entry;
@@ -1604,12 +1616,13 @@ async function handleConfirmAudio(blob, type) {
     const go = document.createElement('button');
     go.type = 'button'; go.className = 'btn';
     go.style.cssText = 'width:100%;background:var(--orange);margin-top:2px';
-    go.textContent = 'Open ' + (ACT_LABEL[entry.a.type] || 'it') + ' now';
+    go.textContent = 'Open ' + appName(entry.a) + ' now';
     go.addEventListener('click', () => { runAction(entry.a); go.remove(); });
     entry.card.appendChild(go);
     go.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    try { runAction(entry.a); } catch {}
-    setState(null, 'Confirmed \u2014 tap the orange button if it didn\u2019t open');
+    if (isApplePhone()) speak('Okay Boss, tap the orange button to open ' + appName(entry.a) + '.');
+    else { try { runAction(entry.a); } catch {} }
+    setState(null, 'Confirmed \u2014 tap the orange button to open ' + appName(entry.a));
     return;
   }
   setState(null, 'Didn’t catch that — tap Confirm or Cancel');
