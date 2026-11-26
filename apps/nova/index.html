@@ -68,6 +68,21 @@
   .mic{width:72px;height:72px;border-radius:50%;border:0;background:var(--purple);display:flex;align-items:center;justify-content:center;box-shadow:0 0 28px rgba(138,43,226,.55);cursor:pointer;flex:none}
   .listening .mic{background:var(--orange);box-shadow:0 0 28px rgba(243,112,33,.55)}
   .center{display:flex;justify-content:center}
+  .dash{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .dcard{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;min-width:0;text-align:left;color:var(--text);font:inherit}
+  .dcard.wide{grid-column:1/-1}
+  .dcard .dh{display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:600;margin-bottom:2px}
+  .dcard .dh small{font-weight:400;color:var(--muted);font-size:12px}
+  .dcard .dr{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.35;padding:3px 0;min-width:0}
+  .dcard .dr span{min-width:0;overflow-wrap:anywhere}
+  .dcard .dm{color:var(--muted);font-size:12px}
+  .dcard .big{font-size:24px;font-weight:600;font-family:'Space Grotesk',sans-serif}
+  .dcard .tick{flex:none;width:20px;height:20px;border-radius:6px;border:1.5px solid var(--muted);background:none;padding:0;cursor:pointer;color:var(--orange);font-size:13px;line-height:17px}
+  .dcard .tag{flex:none;font-size:10px;letter-spacing:1px;border-radius:6px;padding:2px 5px;background:var(--line);color:var(--muted)}
+  .dcard .tag.aera{background:rgba(243,112,33,.15);color:var(--orange)}
+  .dcard .tag.alphas{background:rgba(138,43,226,.18);color:var(--purple-text)}
+  #main.dashmode #log,#main.dashmode #orbWrap,#main.dashmode #fileChip{display:none!important}
+  #main:not(.dashmode) #dash{display:none}
   .card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;display:flex;flex-direction:column;gap:12px}
   label{font-size:13px;color:var(--muted)}
   .field{min-height:48px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--text);padding:0 14px;font:inherit;font-size:15px;width:100%}
@@ -170,11 +185,12 @@
   </section>
 
   <!-- Main -->
-  <section id="main" hidden style="display:flex;flex-direction:column;gap:18px;flex:1">
-    <div>
-      <h1 id="greet">Hi, Boss</h1>
-      <div class="sub" id="date"></div>
+  <section id="main" class="dashmode" hidden style="display:flex;flex-direction:column;gap:18px;flex:1">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:10px">
+      <div><h1 id="greet">Hi, Boss</h1><div class="sub" id="date"></div></div>
+      <button class="link" id="viewBtn" type="button" style="color:var(--purple-text);font-weight:600">Chat</button>
     </div>
+    <div class="dash" id="dash" aria-label="Dashboard"></div>
     <div class="card" id="lockBanner" hidden style="flex-direction:row;align-items:center;gap:12px;padding:12px 14px">
       <div style="flex:1;font-size:13px;color:var(--muted)">Voice lock is off. Teach Nova your voice so it only answers you.</div>
       <button class="send" type="button" id="lockSetup" style="min-width:auto;padding:0 14px;color:var(--orange);border-color:var(--orange)">Set up</button>
@@ -241,7 +257,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1240h';
+const NOVA_BUILD = 'b20261126-1300d';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -265,6 +281,100 @@ const app = $('app');
 let history = [];
 let busy = false;
 
+// ---------- Dashboard (home): Today, Tasks, Notes, AERA tomorrow, Waiting for you ----------
+function setView(v) {
+  const dash = v === 'dash';
+  if ($('main').classList.contains('dashmode') === dash) return;
+  $('main').classList.toggle('dashmode', dash);
+  $('viewBtn').textContent = dash ? 'Chat' : 'Dashboard';
+  if (dash) renderDash(); else { const l = $('log'); setTimeout(() => { l.scrollTop = l.scrollHeight; l.lastElementChild?.scrollIntoView({ block: 'end' }); }, 50); }
+}
+$('viewBtn').addEventListener('click', () => setView($('main').classList.contains('dashmode') ? 'chat' : 'dash'));
+function dEl(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function dCard(title, small, wide) {
+  const c = dEl('div', 'dcard' + (wide ? ' wide' : '')); const h = dEl('div', 'dh'); h.append(dEl('span', '', title)); const sm = dEl('small', '', small || ''); h.append(sm); c.append(h); c._small = sm; return c;
+}
+const klFmt = (iso, opt) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kuala_Lumpur', ...opt }).format(new Date(iso));
+function klDay(offset) { const d = new Date(Date.now() + 8 * 3600e3 + offset * 86400e3); return d.toISOString().slice(0, 10); }
+let dashBusy = false, dashAt = 0;
+async function renderDash() {
+  if (dashBusy || $('main').hidden) return; dashBusy = true; dashAt = Date.now();
+  const box = $('dash');
+  try {
+    const today = klDay(0), tmr = klDay(1);
+    const [cal, tasks, notes, queue, aera] = await Promise.all([
+      sb.from('nova_calendar').select('title,start_at,all_day,location').gte('start_at', today + 'T00:00:00+08:00').lte('start_at', klDay(2) + 'T23:59:59+08:00').order('start_at').limit(6),
+      sb.from('nova_tasks').select('id,text,list,due_at').eq('done', false).order('created_at', { ascending: false }).limit(6),
+      sb.from('nova_notes').select('id,text,biz').eq('done', false).order('created_at', { ascending: false }).limit(6),
+      sb.from('nova_queue').select('id,action').eq('status', 'waiting').order('created_at').limit(5),
+      brainCall({ mode: 'tool', name: 'get_aera_orders', args: { from: tmr, to: tmr } }).then((j) => JSON.parse(j.output)).catch(() => null),
+    ]);
+    box.textContent = '';
+    // Today (iPhone Calendar)
+    const c1 = dCard('\u{1F4C5} Today', 'iPhone Calendar', true);
+    const ev = (cal.data || []);
+    if (!ev.length) c1.append(dEl('div', 'dm', 'Nothing in the next 3 days.'));
+    for (const e of ev) {
+      const d = klFmt(e.start_at, { year: 'numeric', month: '2-digit', day: '2-digit' }).split('/').reverse().join('-');
+      const when = (d === today ? '' : d === tmr ? 'Tmr ' : klFmt(e.start_at, { weekday: 'short' }) + ' ') + (e.all_day ? 'All day' : klFmt(e.start_at, { hour: 'numeric', minute: '2-digit', hour12: true }));
+      const r = dEl('div', 'dr'); const w = dEl('span', 'dm', when); w.style.cssText = 'min-width:78px;flex:none'; r.append(w, dEl('span', '', e.title + (e.location ? ' \u00b7 ' + e.location : ''))); c1.append(r);
+    }
+    box.append(c1);
+    // Tasks (the ones Nova added to MinimaList)
+    const tl = tasks.data || [];
+    const c2 = dCard('\u2705 Tasks', tl.length ? String(tl.length) : '');
+    if (!tl.length) c2.append(dEl('div', 'dm', 'No open tasks. Say \u201cadd a task\u2026\u201d'));
+    for (const t of tl) {
+      const r = dEl('div', 'dr'); const b = dEl('button', 'tick'); b.type = 'button'; b.setAttribute('aria-label', 'Mark done: ' + t.text);
+      b.onclick = async () => { b.textContent = '\u2713'; r.style.opacity = '.45'; const { error } = await sb.from('nova_tasks').update({ done: true, done_at: new Date().toISOString() }).eq('id', t.id); if (error) { b.textContent = ''; r.style.opacity = ''; addMsg('err', 'Couldn\u2019t tick it: ' + error.message); } else setTimeout(() => r.remove(), 600); };
+      const txt = dEl('span', '', t.text); if (t.due_at) { const dm = dEl('div', 'dm', klFmt(t.due_at, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })); txt.append(dm); }
+      r.append(b, txt); c2.append(r);
+    }
+    // Notes
+    const nl = notes.data || [];
+    const c3 = dCard('\u{1F4DD} Notes', nl.length ? String(nl.length) : '');
+    if (!nl.length) c3.append(dEl('div', 'dm', 'No notes. Say \u201cNova, note that\u2026\u201d'));
+    for (const n of nl) {
+      const r = dEl('div', 'dr'); const b = dEl('button', 'tick'); b.type = 'button'; b.setAttribute('aria-label', 'Clear note: ' + n.text);
+      b.onclick = async () => { b.textContent = '\u2713'; r.style.opacity = '.45'; const { error } = await sb.from('nova_notes').update({ done: true }).eq('id', n.id); if (error) { b.textContent = ''; r.style.opacity = ''; } else setTimeout(() => r.remove(), 600); };
+      const tag = dEl('span', 'tag ' + n.biz, n.biz === 'aera' ? 'AERA' : n.biz === 'alphas' ? 'ALPHAS' : 'ME');
+      r.append(b, dEl('span', '', n.text), tag); c3.append(r);
+    }
+    box.append(c2, c3);
+    // AERA tomorrow
+    const c4 = dEl('button', 'dcard wide'); c4.type = 'button';
+    const h4 = dEl('div', 'dh'); h4.append(dEl('span', '', '\u{1F371} AERA tomorrow'), dEl('small', '', klFmt(tmr + 'T12:00:00+08:00', { weekday: 'short', day: 'numeric', month: 'short' }))); c4.append(h4);
+    if (!aera || aera.error) c4.append(dEl('div', 'dm', 'Couldn\u2019t load AERA orders right now.'));
+    else {
+      const big = dEl('div', 'big', String(aera.order_count)); const lab = dEl('span', 'dm', aera.order_count === 1 ? ' order' : ' orders'); lab.style.fontFamily = 'Inter,sans-serif'; big.append(lab); c4.append(big);
+      const un = (aera.unpaid || []).length;
+      c4.append(dEl('div', 'dm', aera.total_boxes + ' meals \u00b7 RM ' + Number(aera.total_sales_rm || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (un ? ' \u00b7 ' + un + ' unpaid' : '')));
+    }
+    c4.onclick = () => { setView('chat'); ask('How many AERA orders tomorrow, and what do we need to cook?'); };
+    box.append(c4);
+    // Waiting for you
+    const ql = queue.data || [];
+    if (ql.length) {
+      const c5 = dEl('button', 'dcard wide'); c5.type = 'button';
+      const h5 = dEl('div', 'dh'); h5.append(dEl('span', '', '\u{1F4E4} Waiting for you'), dEl('small', '', String(ql.length))); c5.append(h5);
+      for (const q of ql) { const a = q.action || {}; c5.append(dEl('div', 'dr', (a.type === 'voice' ? 'Voice note to ' : 'WhatsApp to ') + (a.to_name || a.to || '?') + ' \u2014 tap to confirm')); }
+      c5.onclick = () => setView('chat');
+      box.append(c5);
+    }
+  } catch (e) { dbg('dash err ' + (e.message || e)); }
+  finally { dashBusy = false; }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || $('main').hidden) return;
+  if (Date.now() - dashAt > 5 * 60e3 && !busy && !live && !recording) setView('dash');
+  if ($('main').classList.contains('dashmode') && Date.now() - dashAt > 60e3) renderDash();
+});
+// Tasks Nova added are kept in Nova too, so the Dashboard can show them (MinimaList can't be read back).
+function recordTask(a) {
+  if (!a || a.type !== 'task' || a._recorded) return; a._recorded = true;
+  sb.from('nova_tasks').insert({ text: String(a.text || 'Task').slice(0, 300), list: a.list || null, due_at: a.start || null }).then(({ error }) => { if (error) dbg('task record err ' + error.message); });
+}
+
 // ---------- Sign in ----------
 async function showScreen() {
   const { data: { session } } = await sb.auth.getSession();
@@ -280,7 +390,7 @@ async function showScreen() {
   $('settingsBtn').hidden = !session;
   if (session && locOn()) refreshLoc();
   if (session) icloudSync();
-  if (session) { loadVoiceProfile(); loadHistory().finally(() => setTimeout(showQueue, 300)); }
+  if (session) { loadVoiceProfile(); loadHistory().finally(() => setTimeout(showQueue, 300)); renderDash(); }
   if (session) {
     const h = new Date().toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', hour: 'numeric', hour12: false });
     const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
@@ -769,6 +879,7 @@ async function brainCall(body) {
 function saveOne(role, content) { if (content) sb.from('nova_messages').insert({ role, content }).then(() => {}); }
 
 async function liveStart() {
+  setView('chat');
   if (live || engine === 'std') return;
   const me = { pc: null, dc: null, audio: null, idle: null, bubbles: {}, heard: {}, lastItem: null, closed: false, model: engine };
   live = me;
@@ -1106,7 +1217,7 @@ function stopRecording() {
   try { mediaRec.stop(); } catch {}
 }
 $('mic').addEventListener('click', () => {
-  unlockAudio();
+  unlockAudio(); setView('chat');
   if (novaSpeaking()) novaHush();
   if (engine !== 'std' && !busy) {
     if (live) { liveInterrupt(live); return; }   // in a call: tap = stop Nova talking, keep listening
@@ -1315,6 +1426,7 @@ async function resumeWake() {
 async function pauseWake() { wakeActive = false; }
 async function onWake() {
   if (!handsFreeOn || recording || busy) return;
+  setView('chat');
   await pauseWake();
   if (novaSpeaking()) novaHush();
   recordTarget = 'wake';
@@ -1522,6 +1634,7 @@ async function sendByNova(entry) {
   }
 }
 function showAction(a, q) {
+  if (!q) setView('chat');
   const card = document.createElement('div');
   card.className = 'act';
   // Directions: use his default maps app unless he named one (Google Maps / Apple Maps).
@@ -1539,6 +1652,7 @@ function showAction(a, q) {
   entry.cancel = () => { if (entry.settled) return; entry.settled = true; done('Cancelled'); if (entry.qid) queueMark(entry.qid, 'cancelled'); };
   entry.confirm = (byVoice) => {
     if (entry.settled) return; entry.settled = true;
+    recordTask(a);
     if (sentByNova(a)) { sendByNova(entry); return; }
     if (!byVoice) { done('Confirmed \u2014 opened on this device'); runAction(a); return; }
     // Confirmed by voice: iPhone only lets a page open another app straight after a tap, so give him one big button to tap.
@@ -1618,6 +1732,7 @@ async function handleConfirmAudio(blob, type) {
   if (YES.test(heard)) {
     pendingAction = null;
     entry.settled = true;
+    recordTask(entry.a);
     entry.done('Confirmed by voice');
     const go = document.createElement('button');
     go.type = 'button'; go.className = 'btn';
@@ -2050,6 +2165,7 @@ function showReview(r, fname) {
   c.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 async function reviewFile(text) {
+  setView('chat');
   if (!pendingFile || busy) return;
   const f = pendingFile; busy = true;
   pendingFile = null; $('fileChip').hidden = true;
@@ -2075,6 +2191,7 @@ async function reviewFile(text) {
 }
 
 $('typeForm').addEventListener('submit', (e) => {
+  setView('chat');
   e.preventDefault();
   unlockVoice();
   const t = $('typed').value.trim();
