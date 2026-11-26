@@ -283,7 +283,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1815q';
+const NOVA_BUILD = 'b20261126-1830q';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -663,6 +663,7 @@ async function runBrain(body, typed) {
       if (ev.t !== 'say') dbg('brain ' + ev.t + (ev.error ? ' ' + ev.error : ''));
       if (ev.t === 'heard') { heard = ev.heard; addMsg('me', ev.heard); }
       else if (ev.t === 'say') {
+        if (said && said.trim().endsWith(ev.text.trim())) return;
         said += (said ? ' ' : '') + ev.text;
         if (!bubble) bubble = addMsg('nova', said);
         else { bubble.firstChild.nodeValue = said; bubble.scrollIntoView({ block: 'end' }); }
@@ -1760,6 +1761,7 @@ function ofMerge(a) {
   F.step = 6;
 }
 // ---- Nova asks the order questions one by one ( 26th Nov 2026 ) ----
+function ofSayDay(iso) { try { const d = new Date(iso + 'T12:00:00+08:00'); return d.toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'Asia/Kuala_Lumpur' }) + ' ' + cfDay(iso).replace(/ \d{4}$/, ''); } catch { return cfDay(iso); } }
 function ofFirstGap() { for (let s = 0; s < 6; s++) if (ofCheck(s)) return s; return 6; }
 function ofQuestion() {
   const F = OF; if (!F) return '';
@@ -1770,13 +1772,13 @@ function ofQuestion() {
     if (!F.fulfil) return 'Delivery or self pick-up?';
     if (F.fulfil === 'delivery' && (!F.addr1.trim() || !/^\d{5}$/.test(F.postcode.trim()) || !F.city.trim()))
       return F.lastAddr && !F.addr1 ? 'Deliver to the same address as last time, ' + F.lastAddr + '? Or tell me the new address.' : 'What\u2019s the delivery address, with the postcode and city?';
-    if (!F.slot) return 'Which day and time? I have ' + cfDay(F.date) + '. Slots are 9 to 11, 11 to 1, 1 to 3, or 3 to 5.';
+    if (!F.slot) return 'Which day and time? I have ' + ofSayDay(F.date) + '. Slots are 9 to 11, 11 to 1, 1 to 3, or 3 to 5.';
   }
   if (s === 3) {
     const has = Object.values(F.items).some((i) => i.qty > 0) || ofPickCount() || (F.kind === 'plan' && F.plan && F.plan.meals.length);
     if (!has) {
       if (F.kind === 'plan') return F.pbusy ? '' : 'Tell me the plan: the meals, grams, and how many days.';
-      if (!F.kindSet) return 'What would ' + (F.name ? F.name.split(' ')[0] : 'they') + ' like? A la carte meals, a bundle, their last order, saved plan or cart, or a personalised meal plan?';
+      if (!F.kindSet) return 'What would ' + (F.name || 'they') + ' like? A la carte meals, a bundle, their last order, saved plan or cart, or a personalised meal plan?';
       if (F.kind === 'bundle') return 'Which bundle?';
       if (F.kind === 'cust') return 'Their last order, their latest saved plan, or their cart?';
       return 'Which meals, and how many of each?';
@@ -1787,8 +1789,8 @@ function ofQuestion() {
   }
   if (s === 4) return 'MAP bento box or vacuum packed?';
   if (s === 5) return 'How will they pay? Cash, online banking, sponsored, or send it to them to pay?';
-  const items = F.kind === 'plan' && F.plan ? F.plan.meals.length + ' box personalised plan, about RM ' + F.plan.total_rm.toFixed(2) + ' for the meals' : Object.values(F.items).filter((i) => i.qty > 0).map((i) => i.qty + ' ' + i.name).concat(ofPickLines().map((x) => x.replace(/<[^>]+>/g, ''))).join(', ');
-  return 'That\u2019s ' + items + ' for ' + F.name + ', ' + (F.fulfil === 'pickup' ? 'self pick-up' : 'delivery') + ' on ' + cfDay(F.date) + ', ' + ((OF_SLOTS.find((x) => x[0] === F.slot) || [])[1] || '') + ', ' + (F.pack === 'vacuum' ? 'vacuum packed' : 'bento box') + ', ' + ((OF_PAY.find((p) => p[0] === F.pay) || [])[1] || '').toLowerCase() + '. Submit to the Kitchen, or save as a draft?';
+  const items = F.kind === 'plan' && F.plan ? 'a ' + F.plan.meals.length + '-box personalised plan, about RM ' + F.plan.total_rm.toFixed(2) + ' for the meals' : Object.values(F.items).filter((i) => i.qty > 0).map((i) => i.qty + ' ' + i.name).concat(ofPickLines().map((x) => x.replace(/<[^>]+>/g, ''))).join(', ');
+  return 'That\u2019s ' + items + ' for ' + F.name + ', ' + (F.fulfil === 'pickup' ? 'self pick-up' : 'delivery') + ' on ' + ofSayDay(F.date) + ', ' + ((OF_SLOTS.find((x) => x[0] === F.slot) || [])[1] || '') + ', ' + (F.pack === 'vacuum' ? 'vacuum packed' : 'bento box') + ', ' + ((OF_PAY.find((p) => p[0] === F.pay) || [])[1] || '').toLowerCase() + '. Submit to the Kitchen, or save as a draft?';
 }
 // what the brain needs to know while the form is open
 function ofContext() { const F = OF; return { question: F.lastQ || '', customer: F.name ? F.name + ' <' + F.email + '>' : '', step: ofFirstGap() + 1 }; }
