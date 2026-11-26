@@ -74,11 +74,11 @@
   .dcard .dh{display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:600;margin-bottom:2px}
   .dcard .dh small{font-weight:400;color:var(--muted);font-size:12px}
   .dcard .dr{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.35;padding:3px 0;min-width:0}
-  .dcard .dr span{min-width:0;overflow-wrap:anywhere}
+  .dcard .dr span{min-width:0;overflow-wrap:break-word;word-break:normal}
   .dcard .dm{color:var(--muted);font-size:12px}
   .dcard .big{font-size:24px;font-weight:600;font-family:'Space Grotesk',sans-serif}
   .dcard .tick{flex:none;width:20px;height:20px;border-radius:6px;border:1.5px solid var(--muted);background:none;padding:0;cursor:pointer;color:var(--orange);font-size:13px;line-height:17px}
-  .dcard .tag{flex:none;font-size:10px;letter-spacing:1px;border-radius:6px;padding:2px 5px;background:var(--line);color:var(--muted)}
+  .dcard .tag{display:inline-block;margin-bottom:2px;font-size:9px;letter-spacing:1px;border-radius:6px;padding:2px 5px;background:var(--line);color:var(--muted)}
   .dcard .tag.aera{background:rgba(243,112,33,.15);color:var(--orange)}
   .dcard .tag.alphas{background:rgba(138,43,226,.18);color:var(--purple-text)}
   #main.dashmode #log,#main.dashmode #orbWrap,#main.dashmode #fileChip{display:none!important}
@@ -257,7 +257,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1300d';
+const NOVA_BUILD = 'b20261126-1305d';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -338,7 +338,8 @@ async function renderDash() {
       const r = dEl('div', 'dr'); const b = dEl('button', 'tick'); b.type = 'button'; b.setAttribute('aria-label', 'Clear note: ' + n.text);
       b.onclick = async () => { b.textContent = '\u2713'; r.style.opacity = '.45'; const { error } = await sb.from('nova_notes').update({ done: true }).eq('id', n.id); if (error) { b.textContent = ''; r.style.opacity = ''; } else setTimeout(() => r.remove(), 600); };
       const tag = dEl('span', 'tag ' + n.biz, n.biz === 'aera' ? 'AERA' : n.biz === 'alphas' ? 'ALPHAS' : 'ME');
-      r.append(b, dEl('span', '', n.text), tag); c3.append(r);
+      const body = dEl('span'); body.append(tag, dEl('div', '', n.text));
+      r.append(b, body); c3.append(r);
     }
     box.append(c2, c3);
     // AERA tomorrow
