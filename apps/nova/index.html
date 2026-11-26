@@ -215,9 +215,10 @@
     </div>
     <div style="font-size:20px;font-weight:600;margin-top:10px">Nova's voice</div>
     <div class="note">Tap ▶ to hear a sample. Tap a voice to choose it.</div>
-    <div class="sec">LIVE MINI / LIVE FULL</div>
+    <div class="sec">ONE VOICE FOR EVERYTHING</div>
+    <div class="note" style="margin-top:-4px;margin-bottom:8px">Answers, live calls and WhatsApp voice notes all use this voice, in English, Chinese and Malay.</div>
     <div class="vgrid" id="liveVoices"></div>
-    <div class="sec">STANDARD (PHONE VOICES)</div>
+    <div class="sec">BACKUP ONLY (USED IF THE INTERNET DROPS)</div>
     <div style="display:flex;flex-direction:column;gap:8px" id="stdVoices"></div>
     <div class="note" id="stdNote" style="margin-top:8px"></div>
     <div style="display:flex;align-items:center;gap:10px;margin-top:16px">
@@ -235,7 +236,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1205m';
+const NOVA_BUILD = 'b20261126-1225v';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -602,6 +603,7 @@ if ('speechSynthesis' in window) {
 // iPhones only allow speech that starts from a tap: "unlock" the voice on the first tap.
 let voiceUnlocked = false;
 function unlockVoice() {
+  unlockAudio();
   if (voiceUnlocked || !('speechSynthesis' in window)) return;
   const u = new SpeechSynthesisUtterance(' ');
   u.volume = 0;
@@ -610,6 +612,67 @@ function unlockVoice() {
 }
 
 $('log').addEventListener('click', unlockVoice);
+
+// One Nova voice for everything: each sentence is spoken by Boss's chosen voice (same as live calls and voice notes).
+// Sentences are fetched as soon as they arrive and played in order; the phone voice is only a backup if one fails to load.
+const novaAudio = new Audio(); novaAudio.setAttribute('playsinline', ''); novaAudio.preload = 'auto';
+let sayQ = [], sayPlaying = false, sayGen = 0, audioUnlocked = false;
+function silentWav() {
+  const n = 800, b = new ArrayBuffer(44 + n * 2), v = new DataView(b);
+  const w = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, 8000, true); v.setUint32(28, 16000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+  return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
+}
+function unlockAudio() {
+  if (audioUnlocked) return; audioUnlocked = true;
+  try { novaAudio.src = silentWav(); novaAudio.play().catch(() => { audioUnlocked = false; }); } catch { audioUnlocked = false; }
+}
+function novaVoiceName() { return localStorage.getItem('novaLiveVoice') || 'marin'; }
+function novaSpeaking() { return sayPlaying || sayQ.length > 0 || ('speechSynthesis' in window && speechSynthesis.speaking); }
+function novaHush() {
+  sayGen++; sayQ = []; sayPlaying = false;
+  try { novaAudio.pause(); } catch {}
+  if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch {} }
+}
+function phoneSay(text, rl, onDone) {
+  if (!('speechSynthesis' in window)) { onDone(); return; }
+  const u = new SpeechSynthesisUtterance(text);
+  const pv = pickVoice(rl); if (pv) u.voice = pv;
+  u.lang = rl === 'zh' ? 'zh-CN' : rl === 'ms' ? 'ms-MY' : 'en-US';
+  u.rate = Number(localStorage.getItem('novaRate')) || 1.05;
+  u.onstart = () => setState('speaking', 'Speaking — tap mic to interrupt');
+  let fin = false; const end = () => { if (!fin) { fin = true; onDone(); } };
+  u.onend = u.onerror = end;
+  setTimeout(() => { if (!speechSynthesis.speaking) end(); }, estSpeech(text) + 3000);
+  speechSynthesis.speak(u);
+}
+function cloudSay(text, rl, onDone) {
+  const gen = sayGen;
+  const p = brainCall({ mode: 'voice_preview', message: text, voice: novaVoiceName() })
+    .then((j) => 'data:' + (j.mime || 'audio/mpeg') + ';base64,' + j.audio);
+  p.catch(() => {});
+  sayQ.push({ p, text, rl, gen, onDone });
+  sayPump();
+}
+async function sayPump() {
+  if (sayPlaying) return;
+  const it = sayQ.shift(); if (!it) return;
+  sayPlaying = true;
+  const next = () => { if (it.gen !== sayGen) return; sayPlaying = false; it.onDone(); sayPump(); };
+  let url = null;
+  try { url = await it.p; } catch (e) { dbg('voice load failed: ' + (e.message || e)); }
+  if (it.gen !== sayGen) return;   // Nova was interrupted
+  if (!url) { phoneSay(it.text, it.rl, next); return; }
+  let fin = false; const end = () => { if (!fin) { fin = true; next(); } };
+  novaAudio.onended = end; novaAudio.onerror = end;
+  novaAudio.src = url;
+  novaAudio.playbackRate = Number(localStorage.getItem('novaRate')) || 1.05;
+  setState('speaking', 'Speaking — tap mic to interrupt');
+  try { await novaAudio.play(); }
+  catch (e) { dbg('voice play blocked: ' + (e.message || e)); audioUnlocked = false; fin = true; phoneSay(it.text, it.rl, next); return; }
+  setTimeout(() => { if (!fin && it.gen === sayGen && (novaAudio.paused || novaAudio.ended)) end(); }, estSpeech(it.text) * 2 + 4000);
+}
 
 // Nova's voice: sentences are queued as they arrive; "after" runs once everything has been said.
 let talk = null;
@@ -622,7 +685,7 @@ function talkAfter(me) {
   if (me.finished) return; me.finished = true;
   dbg('talk done cap=' + !!me.capHit + ' pending=' + me.pending + ' speaking=' + ('speechSynthesis' in window && speechSynthesis.speaking) + ' alwaysOn=' + alwaysOn + ' engine=' + engine);
   clearInterval(me.poll); clearTimeout(me.cap);
-  if (me.capHit && 'speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch {} }
+  if (me.capHit) novaHush();
   if (talk === me) talk = null;
   if (pendingAction && !pendingAction.settled) setTimeout(listenForConfirm, 250);
   else if (engine !== 'std' && alwaysOn && !live) setTimeout(liveStart, 250);  // live voice picks up the follow-up
@@ -634,14 +697,13 @@ function talkStart() {
   if (recording && recordTarget === 'followup') { lastHeardSpeech = false; stopRecording(); }
   const me = { text: '', done: false, finished: false, started: Date.now(), lastSay: Date.now(), quiet: 0, poll: null, cap: null, pending: 0 };
   talk = me;
-  if (!('speechSynthesis' in window)) return me;
-  speechSynthesis.cancel();
-  speechSynthesis.resume();
+  novaHush();
+  if ('speechSynthesis' in window) { try { speechSynthesis.resume(); } catch {} }
   if (conversationOn) openConversation();
   // iPhone often never fires "end" for web speech, so watch speechSynthesis (only once the whole answer has arrived).
   me.poll = setInterval(() => {
     if (!me.done || Date.now() - me.lastSay < 800) return;
-    me.quiet = speechSynthesis.speaking ? 0 : me.quiet + 1;
+    me.quiet = novaSpeaking() ? 0 : me.quiet + 1;
     if (me.quiet >= 2) talkAfter(me);
   }, 300);
   return me;
@@ -649,25 +711,17 @@ function talkStart() {
 function talkSay(text) {
   const me = talk && !talk.finished ? talk : talkStart();
   me.text += ' ' + text; me.lastSay = Date.now(); me.quiet = 0;
-  if (!('speechSynthesis' in window)) return;
-  const u = new SpeechSynthesisUtterance(text);
   const rl = replyLang(me.text);
-  voice = pickVoice(rl);
-  if (voice) u.voice = voice;
-  u.lang = rl === 'zh' ? 'zh-CN' : rl === 'ms' ? 'ms-MY' : 'en-US';
-  u.rate = Number(localStorage.getItem('novaRate')) || 1.05;
-  u.onstart = () => setState('speaking', 'Speaking — tap mic to interrupt');
   me.pending++;
-  u.onend = u.onerror = () => { me.pending--; if (me.done && me.pending <= 0) setTimeout(() => talkAfter(me), 200); };
-  speechSynthesis.speak(u);
+  cloudSay(text, rl, () => { me.pending--; me.lastSay = Date.now(); if (me.done && me.pending <= 0) setTimeout(() => talkAfter(me), 200); });
 }
 function talkEnd() {
   const me = talk && !talk.finished ? talk : null;
   if (!me) { talkAfter({ finished: false }); return; }
   me.done = true;
-  if (!('speechSynthesis' in window)) { talkAfter(me); return; }
-  if (me.pending <= 0 && !speechSynthesis.speaking) setTimeout(() => talkAfter(me), 300);
-  me.cap = setTimeout(() => { me.capHit = true; talkAfter(me); }, Math.max(500, me.started + estSpeech(me.text) + 2500 - Date.now()));
+  if (me.pending <= 0 && !novaSpeaking()) setTimeout(() => talkAfter(me), 300);
+  // Safety net if audio never reports it finished (allows for the voice loading time).
+  me.cap = setTimeout(() => { me.capHit = true; talkAfter(me); }, Math.max(500, me.started + estSpeech(me.text) * 1.3 + 9000 - Date.now()));
 }
 function speak(text) { if (live) return; talkStart(); talkSay(text); talkEnd(); }  // in a live call, the live voice does the talking
 
@@ -1036,7 +1090,8 @@ function stopRecording() {
   try { mediaRec.stop(); } catch {}
 }
 $('mic').addEventListener('click', () => {
-  if ('speechSynthesis' in window && speechSynthesis.speaking) speechSynthesis.cancel();
+  unlockAudio();
+  if (novaSpeaking()) novaHush();
   if (engine !== 'std' && !busy) {
     if (live) { liveInterrupt(live); return; }   // in a call: tap = stop Nova talking, keep listening
     if (recording) { lastHeardSpeech = false; stopRecording(); }
@@ -1234,7 +1289,7 @@ async function startWake() {
   await resumeWake();
 }
 async function resumeWake() {
-  if (!handsFreeOn || !sKw || wakeActive || recording || busy || ('speechSynthesis' in window && speechSynthesis.speaking)) return;
+  if (!handsFreeOn || !sKw || wakeActive || recording || busy || novaSpeaking()) return;
   if (pendingAction && !pendingAction.settled) return;
   resetWakeState();
   try { await wakeAC?.resume(); } catch {}
@@ -1245,7 +1300,7 @@ async function pauseWake() { wakeActive = false; }
 async function onWake() {
   if (!handsFreeOn || recording || busy) return;
   await pauseWake();
-  if ('speechSynthesis' in window && speechSynthesis.speaking) speechSynthesis.cancel();
+  if (novaSpeaking()) novaHush();
   recordTarget = 'wake';
   startRecording();
 }
@@ -1498,7 +1553,7 @@ function showAction(a, q) {
         } catch (e) { ls.disabled = false; ls.textContent = '\u25B6 Listen first'; addMsg('err', 'Couldn\u2019t play it: ' + (e.message || e)); return; }
         ls.disabled = false;
       }
-      try { speechSynthesis.cancel(); } catch {}
+      novaHush();
       au.currentTime = 0; au.play(); ls.textContent = '\u23F8 Pause (' + v.charAt(0).toUpperCase() + v.slice(1) + ')';
     });
     card.append(ls);
@@ -1624,9 +1679,9 @@ function listenForFollowUp() {
   if (live) return;
   if (!conversationOn || recording || busy || followStarting) { dbg('follow skip rec=' + recording + ' busy=' + busy + ' starting=' + followStarting); return; }
   if (pendingAction && !pendingAction.settled) { dbg('follow skip card'); return; }
-  if ('speechSynthesis' in window && speechSynthesis.speaking) {
+  if (novaSpeaking()) {
     // iPhone sometimes keeps saying "speaking" after Nova has finished: retry, then clear it.
-    if (++followWaits > 6) { speechSynthesis.cancel(); followWaits = 0; }
+    if (++followWaits > 6) { novaHush(); followWaits = 0; }
     setTimeout(listenForFollowUp, 500); return;
   }
   followWaits = 0;
