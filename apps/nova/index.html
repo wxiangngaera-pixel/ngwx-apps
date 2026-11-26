@@ -235,7 +235,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1215';
+const NOVA_BUILD = 'b20261126-1230';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1303,7 +1303,7 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 // ---------- Actions on this phone / Mac (always need Boss's tap) ----------
-const ACT_LABEL = { call: 'Call', whatsapp: 'WhatsApp', voice: 'WhatsApp voice note', sms: 'Message', email: 'Email', navigate: 'Navigate', calendar: 'Calendar event', reminder: 'Reminder (Calendar alert)' };
+const ACT_LABEL = { call: 'Call', whatsapp: 'WhatsApp', voice: 'WhatsApp voice note', sms: 'Message', email: 'Email', navigate: 'Navigate', calendar: 'Calendar event', reminder: 'Reminder (Calendar alert)', task: 'MinimaList task', claude: 'Hand to Claude' };
 function digits(p) { return String(p || '').replace(/[^\d]/g, ''); }
 function fmtWhen(iso) {
   if (!iso) return '';
@@ -1321,14 +1321,39 @@ function describe(a) {
     case 'navigate': return 'Directions to ' + (a.place || '?') + ' (' + ({ google: 'Google Maps', apple: 'Apple Maps' }[a.app] || 'Waze') + ')';
     case 'calendar': return (a.title || 'Event') + '\n' + fmtWhen(a.start) + (a.place ? '\n' + a.place : '');
     case 'reminder': return (a.text || a.title || 'Reminder') + (a.start ? '\n' + fmtWhen(a.start) : '');
+    case 'task': return (a.text || 'Task') + '\n' + [a.list ? 'List: ' + a.list : 'No list', a.start ? fmtWhen(a.start) : ''].filter(Boolean).join(' \u00b7 ');
+    case 'claude': return 'Brief Nova wrote:\n' + (a.text || '') + '\n\n' + (isApplePhone() ? 'Nova copies the brief and opens Claude \u2014 tap Paste, then Send.' : 'Opens a new Claude chat with the brief typed in \u2014 check it, then Send.');
   }
   return JSON.stringify(a);
 }
 function icsTime(iso) { return new Date(iso).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z'); }
 function icsEsc(t) { return String(t || '').replace(/[\\,;]/g, (m) => '\\' + m).replace(/\n/g, '\\n'); }
+function isApplePhone() { return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
+// KL-time date and time for a +08:00 ISO string, as MinimaList wants them (yyyy-mm-dd, HH:mm).
+function klParts(iso) {
+  const d = new Date(iso); if (isNaN(d)) return null;
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(d).map((x) => [x.type, x.value]));
+  return { date: p.year + '-' + p.month + '-' + p.day, time: (p.hour === '24' ? '00' : p.hour) + ':' + p.minute };
+}
 function runAction(a) {
   const enc = encodeURIComponent;
   switch (a.type) {
+    case 'task': {
+      // MinimaList's own link for creating a task (from its App Store page).
+      const q = ['content=' + enc(a.text || '')];
+      if (a.list) q.unshift('list=' + enc(a.list));
+      const k = a.start ? klParts(a.start) : null;
+      if (k) { q.push('date=' + k.date); if (!/T00:00(:00)?\+08:00$/.test(a.start)) q.push('time=' + k.time); }
+      location.href = 'minimalist://x-callback-url/create?' + q.join('&');
+      return;
+    }
+    case 'claude': {
+      const brief = String(a.text || '');
+      try { navigator.clipboard.writeText(brief); } catch {}
+      // Mac Claude app: officially opens a new chat with the brief typed in. iPhone: opens Claude; the brief is on the clipboard.
+      location.href = isApplePhone() ? 'claude://claude.ai/new' : 'claude://claude.ai/new?q=' + enc(brief.slice(0, 14000));
+      return;
+    }
     case 'call': location.href = 'tel:' + (a.to ? '+' + digits(a.to) : ''); return;
     case 'voice':
     case 'whatsapp': location.href = 'https://wa.me/' + digits(a.to) + (a.text ? '?text=' + enc(a.text) : ''); return;
@@ -1401,7 +1426,7 @@ function showAction(a, q) {
   const row = document.createElement('div'); row.className = 'row';
   const no = document.createElement('button'); no.type = 'button'; no.textContent = 'Cancel';
   no.style.cssText = 'background:none;border:1px solid var(--line);color:var(--text)';
-  const yes = document.createElement('button'); yes.type = 'button'; yes.textContent = a.type === 'navigate' ? 'Open in ' + ({ google: 'Google Maps', apple: 'Apple Maps' }[a.app] || 'Waze') : 'Confirm';
+  const yes = document.createElement('button'); yes.type = 'button'; yes.textContent = a.type === 'navigate' ? 'Open in ' + ({ google: 'Google Maps', apple: 'Apple Maps' }[a.app] || 'Waze') : a.type === 'task' ? 'Add to MinimaList' : a.type === 'claude' ? 'Open in Claude' : 'Confirm';
   if (a.type === 'navigate') no.textContent = 'Not now';
   yes.style.cssText = 'background:var(--orange);border:0;color:#fff';
   const done = (txt) => { row.remove(); k.textContent = txt; card.style.borderColor = 'var(--line)'; };
