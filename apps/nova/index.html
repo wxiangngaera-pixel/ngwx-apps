@@ -135,6 +135,9 @@
   .ofit small{display:block;color:var(--muted);font-size:12px}
   .ofq{display:flex;align-items:center;gap:8px;flex-shrink:0}.ofq button{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:none;color:var(--text);font-size:18px;cursor:pointer}
   .ofq b{min-width:18px;text-align:center}
+  .ofhd{font-size:11px;letter-spacing:1.2px;color:var(--orange);padding:10px 10px 4px;text-transform:uppercase}
+  .ofpk{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-bottom:1px solid var(--line);font-size:14px;cursor:pointer}
+  .ofpk input{margin-top:3px;width:18px;height:18px;flex-shrink:0}.ofpk small{display:block;color:var(--muted);font-size:12px;line-height:1.4}
   .ofsum{border:1px solid var(--line);border-radius:12px}.ofrow{display:flex;justify-content:space-between;gap:12px;padding:9px 12px;border-bottom:1px solid var(--line);font-size:14px}
   .ofrow span:first-child{color:var(--muted)}.ofrow span:last-child{text-align:right}.ofrow small{color:var(--muted)}
   .vgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
@@ -280,7 +283,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1600h';
+const NOVA_BUILD = 'b20261126-1615h';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1707,7 +1710,7 @@ function ofEsc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&a
 function orderForm(pre) {
   setView('chat');
   if (!OF) {
-    OF = { step: 0, email: '', name: '', phone: '', isNew: false, fulfil: '', addr1: '', addr2: '', postcode: '', city: '', state: 'Selangor', date: ofDate(2), slot: '', kind: 'meal', items: {}, basis: '', spice: '', seas: '', pack: '', pay: '', spWhy: '', note: '', q: '', all: [], menu: null };
+    OF = { step: 0, email: '', name: '', phone: '', isNew: false, fulfil: '', addr1: '', addr2: '', postcode: '', city: '', state: 'Selangor', date: ofDate(2), slot: '', kind: 'meal', items: {}, picks: { copy: {}, plans: {}, cart: false }, cust: null, basis: '', spice: '', seas: '', pack: '', pay: '', spWhy: '', note: '', q: '', all: [], menu: null };
     brainCall({ mode: 'tool', name: 'aera_customers', args: {} }).then((j) => { OF && (OF.all = JSON.parse(j.output).customers || []); ofDraw(); }).catch(() => {});
     brainCall({ mode: 'tool', name: 'aera_menu_items', args: {} }).then((j) => { OF && (OF.menu = JSON.parse(j.output)); ofDraw(); }).catch(() => { OF && (OF.menu = { meals: [], bundles: [], err: 1 }); ofDraw(); });
   }
@@ -1736,7 +1739,7 @@ function ofMerge(a) {
   F.step = 6;
 }
 function ofPick(c) {
-  const F = OF; F.email = c.email; F.name = c.name || ''; F.phone = c.phone ? String(c.phone) : F.phone; F.isNew = false; F.q = c.email;
+  const F = OF; if (F.email !== c.email) { F.cust = null; F.picks = { copy: {}, plans: {}, cart: false }; } F.email = c.email; F.name = c.name || ''; F.phone = c.phone ? String(c.phone) : F.phone; F.isNew = false; F.q = c.email;
   brainCall({ mode: 'tool', name: 'aera_customer', args: { query: c.email } }).then((j) => {
     const m = (JSON.parse(j.output).matches || []).find((x) => (x.email || '').toLowerCase() === c.email.toLowerCase());
     if (m && m.last_address && OF && !OF.addr1 && !OF.postcode) { OF.lastAddr = m.last_address; ofDraw(); }
@@ -1753,12 +1756,25 @@ function ofCheck(s) {
     if (!F.date) return 'Pick the date'; if (!F.slot) return 'Pick the time slot'; return '';
   }
   if (s === 3) {
-    if (F.kind !== 'plan' && !Object.values(F.items).some((i) => i.qty > 0)) return 'Add at least one Meal or Bundle';
+    if (F.kind !== 'plan' && !Object.values(F.items).some((i) => i.qty > 0) && !ofPickCount()) return 'Add at least one Meal, Bundle, past order, saved plan or the Cart';
     return !F.basis ? 'Cooked or Raw weight?' : !F.spice ? 'Spice level?' : !F.seas ? 'Salt level?' : '';
   }
   if (s === 4) return F.pack ? '' : 'MAP Bento Box or Vacuum Packed?';
   if (s === 5) return F.pay ? '' : 'How will they pay?';
   return '';
+}
+function ofPickLines() {
+  const F = OF, C = F.cust || { orders: [], plans: [] }, out = [];
+  for (const o of C.orders) if (F.picks.copy[o.id]) out.push('Copy ' + ofEsc(o.no || 'past order'));
+  for (const p of C.plans) if (F.picks.plans[p.id]) out.push('Saved plan \u00b7 ' + p.boxes + ' boxes');
+  if (F.picks.cart) out.push('Their Cart');
+  return out;
+}
+function ofPickCount() { const P = OF.picks; return Object.values(P.copy).filter(Boolean).length + Object.values(P.plans).filter(Boolean).length + (P.cart ? 1 : 0); }
+function ofLoadCust() {
+  const F = OF; if (F.custBusy) return; F.custBusy = true; const em = F.email;
+  brainCall({ mode: 'tool', name: 'aera_customer_picks', args: { email: em } }).then((j) => { if (!OF || OF.email !== em) return; OF.cust = JSON.parse(j.output); OF.custBusy = false; ofDraw(); })
+    .catch(() => { if (OF) { OF.cust = { orders: [], plans: [], cart: null }; OF.custBusy = false; ofDraw(); } });
 }
 function ofAddress() { const F = OF; return [F.addr1, F.addr2, [F.postcode, F.city].filter(Boolean).join(' '), F.state].map((x) => String(x || '').trim()).filter(Boolean).join(', '); }
 function ofChips(key, opts) { return '<div class="ofch">' + opts.map((o) => '<button type="button" data-k="' + key + '" data-v="' + o[0] + '"' + (OF[key] === o[0] ? ' class="on"' : '') + '>' + o[1] + '</button>').join('') + '</div>'; }
@@ -1789,8 +1805,18 @@ function ofDraw() {
       OF_SLOTS.map((s) => '<option value="' + s[0] + '"' + (F.slot === s[0] ? ' selected' : '') + '>' + s[1] + '</option>').join('') + '</select></div></div>' +
       '<input class="field" data-f="note" placeholder="Note for the Kitchen or Rider (optional)" value="' + ofEsc(F.note) + '">';
   } else if (F.step === 3) {
-    b = ofChips('kind', [['meal', 'A la Carte'], ['bundle', 'Meal Bundles'], ['plan', 'Personalised Meal Plan']]);
-    if (F.kind === 'plan') b += '<div class="note">Personalised Meal Plans are built by the gram. For now the Kitchen Console opens with everything else filled in, and you build the plan there. Building it from your message or voice comes next.</div>';
+    b = ofChips('kind', [['meal', 'A la Carte'], ['bundle', 'Meal Bundles'], ['cust', 'From customer'], ['plan', 'Personalised Meal Plan']]);
+    if (F.kind === 'cust') {
+      if (F.isNew || !F.email) b += '<div class="note">New customers have no past orders, saved plans or cart yet.</div>';
+      else if (!F.cust) { b += '<div class="note">Loading ' + ofEsc(F.name || F.email) + '\u2019s past orders, saved plans and cart\u2026</div>'; ofLoadCust(); }
+      else {
+        const C = F.cust, row = (k, id, on, t, sub) => '<label class="ofpk"><input type="checkbox" data-pk="' + k + '" data-id="' + ofEsc(id) + '"' + (on ? ' checked' : '') + '><span>' + t + '<small>' + sub + '</small></span></label>';
+        b += '<div class="oflist">' +
+          '<div class="ofhd">Past orders</div>' + (C.orders.length ? C.orders.map((o) => row('copy', o.id, F.picks.copy[o.id], ofEsc(o.no || 'Order') + ' \u00b7 ' + (o.date ? cfDay(o.date) : ''), o.boxes + ' boxes \u00b7 ' + ofEsc(o.text))).join('') : '<div class="note" style="padding:8px 10px">None yet</div>') +
+          '<div class="ofhd">Saved Meal Plans</div>' + (C.plans.length ? C.plans.map((p) => row('plans', p.id, F.picks.plans[p.id], ofEsc(p.name || ('Plan \u00b7 ' + p.days + ' day' + (p.days > 1 ? 's' : '') + ' \u00d7 ' + p.per_day + ' meals')), p.boxes + ' boxes \u00b7 RM ' + Number(p.price_rm).toFixed(2) + ' \u00b7 saved ' + cfDay(p.saved))).join('') : '<div class="note" style="padding:8px 10px">None yet</div>') +
+          '<div class="ofhd">Cart</div>' + (C.cart ? row('cart', 'cart', F.picks.cart, 'Everything in their Cart', (C.cart.text || (C.cart.plan ? 'A Personalised Meal Plan' : '')) + (C.cart.updated ? ' \u00b7 ' + cfDay(C.cart.updated) : '')) : '<div class="note" style="padding:8px 10px">Empty</div>') + '</div>';
+      }
+    } else if (F.kind === 'plan') b += '<div class="note">Personalised Meal Plans are built by the gram. For now the Kitchen Console opens with everything else filled in, and you build the plan there. Building it from your message or voice comes next.</div>';
     else if (!F.menu) b += '<div class="note">Loading the menu…</div>';
     else {
       const list = (F.kind === 'bundle' ? F.menu.bundles : F.menu.meals) || [];
@@ -1811,7 +1837,7 @@ function ofDraw() {
     const L = (k, v) => '<div class="ofrow"><span>' + k + '</span><span>' + v + '</span></div>';
     b = '<div class="ofsum">' + L('Customer', ofEsc(F.name) + '<br><small>' + ofEsc(F.email) + ' · ' + ofEsc(F.phone) + '</small>') +
       L(F.fulfil === 'pickup' ? 'Self Pick-Up' : 'Delivery', cfDay(F.date) + ', ' + ((OF_SLOTS.find((s) => s[0] === F.slot) || [])[1] || '') + (F.fulfil === 'delivery' ? '<br><small>' + ofEsc(ofAddress()) + '</small>' : '')) +
-      L('Meals', F.kind === 'plan' ? 'Personalised Meal Plan (build in the Console)' : items.map((i) => i.qty + '× ' + ofEsc(i.name)).join('<br>')) +
+      L('Meals', F.kind === 'plan' ? 'Personalised Meal Plan (build in the Console)' : (items.map((i) => i.qty + '\u00d7 ' + ofEsc(i.name)).concat(ofPickLines()).join('<br>') || '\u2014')) +
       L('Weight · Spice · Salt', ({ cooked: 'Cooked', raw: 'Raw' })[F.basis] + ' · ' + ({ normal: 'Normal', less: 'Less Spicy', none: 'No Spice' })[F.spice] + ' · ' + ({ normal: 'Normal', less_salt: 'Less Salt', no_salt: 'No Salt' })[F.seas]) +
       L('Packaging', F.pack === 'vacuum' ? 'Vacuum Packed' : 'MAP Bento Box') + L('Payment', (OF_PAY.find((p) => p[0] === F.pay) || [])[1] || '') +
       (F.note ? L('Note', ofEsc(F.note)) : '') + '</div>' +
@@ -1838,6 +1864,7 @@ function ofWire(w) {
   if ($$('#ofNext')) $$('#ofNext').onclick = () => { const m = ofCheck(F.step); if (m) return err(m); F.step++; ofDraw(); };
   w.querySelectorAll('.ofch button').forEach((bt) => bt.onclick = () => { F[bt.dataset.k] = bt.dataset.v; ofDraw(); });
   w.querySelectorAll('[data-f]').forEach((el) => { el.oninput = el.onchange = () => { F[el.dataset.f] = el.value; err(''); }; });
+  w.querySelectorAll('[data-pk]').forEach((cb) => cb.onchange = () => { const k = cb.dataset.pk; if (k === 'cart') F.picks.cart = cb.checked; else F.picks[k][cb.dataset.id] = cb.checked; err(''); });
   w.querySelectorAll('.ofq button').forEach((bt) => bt.onclick = () => {
     const list = (F.kind === 'bundle' ? F.menu.bundles : F.menu.meals) || [], m = list.find((x) => x.id === bt.dataset.id); if (!m) return;
     const it = F.items[m.id] || (F.items[m.id] = { kind: F.kind === 'bundle' ? 'bundle' : 'meal', id: m.id, name: m.name, qty: 0 });
@@ -1866,22 +1893,33 @@ function ofWire(w) {
     if (!F.email) setTimeout(() => em.focus(), 50);
   }
   if ($$('#ofGo')) $$('#ofGo').onclick = () => ofSubmit();
-  if ($$('#ofDraft')) $$('#ofDraft').onclick = () => err('Save as Draft is the next part I’m building — for now, submit or close.');
+  if ($$('#ofDraft')) $$('#ofDraft').onclick = () => ofSubmit(true);
 }
-function ofSubmit() {
+function ofSubmit(draft) {
   const F = OF;
-  for (let s = 0; s < 6; s++) { const m = ofCheck(s); if (m) { F.step = s; ofDraw(); const e = document.getElementById('ofErr'); if (e) { e.textContent = m; e.hidden = false; } return; } }
+  for (let s = 0; s < (draft ? 1 : 6); s++) { const m = ofCheck(s); if (m) { F.step = s; ofDraw(); const e = document.getElementById('ofErr'); if (e) { e.textContent = m; e.hidden = false; } return; } }
   const items = F.kind === 'plan' ? [] : Object.values(F.items).filter((i) => i.qty > 0).map((i) => ({ kind: i.kind, id: i.id, name: i.name, qty: i.qty }));
   const d = { name: F.name.trim(), email: F.email, phone: String(F.phone).trim(), items, fulfil: F.fulfil, date: F.date, slot: F.slot,
     address: F.fulfil === 'delivery' ? ofAddress() : '', note: F.note, pack: F.pack, basis: F.basis, seas: F.seas, spice: F.spice,
     pay: { cash: 'cash', transfer: 'transfer', sponsored: 'cash', send: 'myacct' }[F.pay] };
   if (F.pay === 'sponsored') { d.sp = 'order'; d.spWhy = F.spWhy || 'Sponsored'; }
-  if (F.kind !== 'plan') { d.auto = 1; d.back = location.origin + location.pathname; }
+  if (F.kind !== 'plan') { d.copy = Object.keys(F.picks.copy).filter((k) => F.picks.copy[k]); d.plans = Object.keys(F.picks.plans).filter((k) => F.picks.plans[k]); if (F.picks.cart) d.cart = 1; }
+  else d.plan = 1;
+  d.back = location.origin + location.pathname;
+  if (draft) d.draft = 1; else if (F.kind !== 'plan') d.auto = 1;
   const j = btoa(unescape(encodeURIComponent(JSON.stringify(d)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  addMsg('nova', F.kind === 'plan' ? 'Opening the Kitchen Console for ' + d.name + '’s Personalised Meal Plan…' : 'Sending ' + d.name + '’s order to the Kitchen…');
+  addMsg('nova', draft ? 'Saving ' + (d.name || 'this') + '\u2019s order as a Draft\u2026' : F.kind === 'plan' ? 'Opening the Kitchen Console for ' + d.name + '’s Personalised Meal Plan…' : 'Sending ' + d.name + '’s order to the Kitchen…');
   document.getElementById('ofWrap')?.remove(); OF = null;
   location.href = 'https://aeramealprep.net/kitchen/?app=no&nova=' + j + '#neworder';
 }
+// Back from the Kitchen Console after a Draft was saved.
+(function ofDraftBack() {
+  const m = location.search.match(/[?&]aera_draft=([^&#]+)/); if (!m) return;
+  try { window.history.replaceState(null, '', location.pathname); } catch {}
+  let g = {}; try { let s = m[1].replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; g = JSON.parse(decodeURIComponent(escape(atob(s)))); } catch {}
+  const t = 'Draft saved, Boss' + (g.name ? ' \u2014 ' + g.name + (g.date ? ', ' + cfDay(g.date) : '') : '') + '. It\u2019s under Drafts in the Kitchen Console.';
+  setTimeout(() => { setView('chat'); addMsg('nova', t); history.push({ role: 'assistant', content: t }); saveOne('assistant', t); try { speak('Draft saved, Boss.'); } catch {} }, 1200);
+})();
 // Back from the Kitchen Console after an order was saved.
 (function ofBack() {
   const m = location.search.match(/[?&]aera_saved=([^&#]+)/); if (!m) return;
