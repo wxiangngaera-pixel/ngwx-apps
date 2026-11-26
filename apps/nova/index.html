@@ -207,7 +207,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1100';
+const NOVA_BUILD = 'b20261126-1120';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -393,7 +393,14 @@ function refreshLoc() {
   if (locPending) return locPending;
   locPending = new Promise((res) => {
     navigator.geolocation.getCurrentPosition(
-      (p) => { lastLoc = { lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy), at: Date.now() }; dbg('loc ok acc ' + lastLoc.acc); res(lastLoc); },
+      (p) => {
+        const prev = lastLoc;
+        lastLoc = { lat: p.coords.latitude, lng: p.coords.longitude, acc: Math.round(p.coords.accuracy), at: Date.now() };
+        // Keep the street name if he hasn't moved more than ~80 m; otherwise look it up again (free, done from his phone).
+        if (prev && prev.addr && Math.abs(prev.lat - lastLoc.lat) < 0.0007 && Math.abs(prev.lng - lastLoc.lng) < 0.0007) lastLoc.addr = prev.addr;
+        else streetName(lastLoc);
+        dbg('loc ok acc ' + lastLoc.acc); res(lastLoc);
+      },
       (e) => {
         dbg('loc err ' + e.code);
         if (e.code === 1) { localStorage.setItem('novaLoc', 'off'); showLoc(); addMsg('err', 'Location is blocked for Nova. On iPhone: Settings \u2192 Privacy & Security \u2192 Location Services \u2192 Safari Websites \u2192 While Using. Then tap Location again.'); }
@@ -403,11 +410,26 @@ function refreshLoc() {
   }).finally(() => { locPending = null; });
   return locPending;
 }
+// Street name for a GPS point, looked up from his phone (OpenStreetMap, free). Never blocks a question.
+let addrPending = null;
+function streetName(l) {
+  addrPending = fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&accept-language=en&lat=' + l.lat + '&lon=' + l.lng)
+    .then((r) => r.ok ? r.json() : null)
+    .then((d) => {
+      if (!d) return;
+      const a = d.address || {};
+      const s = [a.house_number && a.road ? a.house_number + ' ' + a.road : a.road, a.neighbourhood || a.suburb || a.quarter, a.city || a.town || a.village || a.city_district, a.state].filter(Boolean).join(', ');
+      if (lastLoc === l) l.addr = s || d.display_name || undefined;
+    })
+    .catch(() => {}).finally(() => { addrPending = null; });
+  return addrPending;
+}
 // Location to send with a question: fresh if under 1 minute old, otherwise wait up to 2.5 s for a new fix.
 async function locForQuestion() {
   if (!locOn()) return null;
-  if (lastLoc && Date.now() - lastLoc.at < 60000) return lastLoc;
+  if (lastLoc && Date.now() - lastLoc.at < 60000) { if (addrPending) await Promise.race([addrPending, new Promise((r) => setTimeout(r, 1200))]); return lastLoc; }
   const fresh = await Promise.race([refreshLoc(), new Promise((r) => setTimeout(() => r(null), 2500))]);
+  if (addrPending) await Promise.race([addrPending, new Promise((r) => setTimeout(r, 1200))]);
   return fresh || lastLoc;
 }
 showLoc();
