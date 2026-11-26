@@ -257,7 +257,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1445p';
+const NOVA_BUILD = 'b20261126-1450h';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -508,7 +508,7 @@ async function loadHistory() {
   $('log').innerHTML = ''; lastDay = '';
   const real = rows.filter((r) => !(r.role === 'user' && fakeHeard(r.content)));
   for (const r of real) addMsg(r.role === 'user' ? 'me' : 'nova', r.content, r.created_at);
-  history = real.slice(-12).map((r) => ({ role: r.role, content: r.content }));
+  history = real.slice(-30).map((r) => ({ role: r.role, content: r.content }));
   moreButton();
 }
 async function loadEarlier() {
@@ -655,7 +655,7 @@ async function runBrain(body, typed) {
   if (!bubble && reply) { addMsg('nova', reply); talkSay(reply); }
   history.push({ role: 'user', content: heard }, { role: 'assistant', content: reply });
   saveExchange(heard, reply);
-  history = history.slice(-12);
+  history = history.slice(-30);
   talkEnd();
   return 'ok';
 }
@@ -891,7 +891,7 @@ async function liveStart() {
     me.audio.play().catch(() => {}); // unlock playback on this tap (iPhone)
     try { const AC = window.AudioContext || window.webkitAudioContext; if (!levelAC) levelAC = new AC(); levelAC.resume(); } catch {}
     dbg('live start ' + engine);
-    const [j, mic] = await Promise.all([brainCall({ mode: 'live_session', model: engine === 'full' ? 'full' : 'mini', history: history.slice(-12), voice: localStorage.getItem('novaLiveVoice') || 'marin' }),
+    const [j, mic] = await Promise.all([brainCall({ mode: 'live_session', model: engine === 'full' ? 'full' : 'mini', history: history.slice(-30), voice: localStorage.getItem('novaLiveVoice') || 'marin' }),
       // Its own mic stream: on iPhone a shared one can be silently muted while another recorder holds it.
       navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } })]);
     if (me.closed) return;
@@ -972,7 +972,7 @@ async function onLive(me, ev) {
       me.heard[ev.item_id] = t;
       const el = me.bubbles[ev.item_id];
       if (el) { if (t) el.firstChild.nodeValue = t; else el.remove(); }
-      if (t) { history.push({ role: 'user', content: t }); history = history.slice(-12); saveOne('user', t); }
+      if (t) { history.push({ role: 'user', content: t }); history = history.slice(-30); saveOne('user', t); }
       break;
     }
     case 'output_audio_buffer.started':
@@ -981,7 +981,7 @@ async function onLive(me, ev) {
       liveIdle(me); setState('listening', 'Live — just talk'); break;
     case 'response.output_audio_transcript.done': {
       const t = (ev.transcript || '').trim();
-      if (t) { addMsg('nova', t); history.push({ role: 'assistant', content: t }); history = history.slice(-12); saveOne('assistant', t); }
+      if (t) { addMsg('nova', t); history.push({ role: 'assistant', content: t }); history = history.slice(-30); saveOne('assistant', t); }
       break;
     }
     case 'response.done': {
@@ -2203,7 +2203,7 @@ async function reviewFile(text) {
     showReview(r, f.name);
     const full = reviewText(r);
     history.push({ role: 'user', content: q }, { role: 'assistant', content: (r.spoken || '') + '\n\n' + full.slice(0, 3500) });
-    history = history.slice(-12);
+    history = history.slice(-30);
     saveExchange(q, (r.spoken || '') + '\n\n' + full);
     talkStart(); talkSay(r.spoken || 'Boss, the review is on screen.'); talkEnd();
   } catch (err) {
