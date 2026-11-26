@@ -283,7 +283,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1615h';
+const NOVA_BUILD = 'b20261126-1625h';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -455,7 +455,7 @@ function setState(s, text) {
 }
 function fmtDay(d) {
   const n = d.getDate(), sfx = (n % 10 === 1 && n !== 11) ? 'st' : (n % 10 === 2 && n !== 12) ? 'nd' : (n % 10 === 3 && n !== 13) ? 'rd' : 'th';
-  return n + sfx + ' ' + d.toLocaleDateString('en-MY', { month: 'short' }) + ' ' + d.getFullYear();
+  return n + sfx + ' ' + 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ')[d.getMonth()] + ' ' + d.getFullYear();
 }
 let lastDay = '';
 function addMsg(cls, text, when) {
@@ -2034,7 +2034,7 @@ function customerForm() {
 function cfDay(iso) {
   const d = new Date(String(iso).slice(0, 10) + 'T00:00:00+08:00'); if (isNaN(d)) return iso;
   const n = d.getDate(), sfx = (n % 100 >= 11 && n % 100 <= 13) ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
-  return n + sfx + ' ' + d.toLocaleString('en-GB', { month: 'short', timeZone: 'Asia/Kuala_Lumpur' }) + ' ' + d.getFullYear();
+  return n + sfx + ' ' + 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ')[d.getMonth()] + ' ' + d.getFullYear();
 }
 function showAction(a, q) {
   if (!q) setView('chat');
