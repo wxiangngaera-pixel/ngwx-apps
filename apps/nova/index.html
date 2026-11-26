@@ -283,7 +283,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1830q';
+const NOVA_BUILD = 'b20261126-1835q';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -663,7 +663,7 @@ async function runBrain(body, typed) {
       if (ev.t !== 'say') dbg('brain ' + ev.t + (ev.error ? ' ' + ev.error : ''));
       if (ev.t === 'heard') { heard = ev.heard; addMsg('me', ev.heard); }
       else if (ev.t === 'say') {
-        if (said && said.trim().endsWith(ev.text.trim())) return;
+        if (said && (said.trim().endsWith(ev.text.trim()) || /^(okay|ok|got it|alright|好的|收到|baik)[^.!?。！？]{0,14}[.!。！]?$/i.test(ev.text.trim()))) return;  // one acknowledgement is enough
         said += (said ? ' ' : '') + ev.text;
         if (!bubble) bubble = addMsg('nova', said);
         else { bubble.firstChild.nodeValue = said; bubble.scrollIntoView({ block: 'end' }); }
