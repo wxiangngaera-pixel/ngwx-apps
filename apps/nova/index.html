@@ -257,7 +257,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1305d';
+const NOVA_BUILD = 'b20261126-1430o';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1488,7 +1488,7 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 // ---------- Actions on this phone / Mac (always need Boss's tap) ----------
-const ACT_LABEL = { call: 'Call', whatsapp: 'WhatsApp', voice: 'WhatsApp voice note', sms: 'Message', email: 'Email', navigate: 'Navigate', calendar: 'Calendar event', reminder: 'Reminder (Calendar alert)', task: 'MinimaList task', claude: 'Hand to Claude' };
+const ACT_LABEL = { call: 'Call', whatsapp: 'WhatsApp', voice: 'WhatsApp voice note', sms: 'Message', email: 'Email', navigate: 'Navigate', calendar: 'Calendar event', reminder: 'Reminder (Calendar alert)', task: 'MinimaList task', claude: 'Hand to Claude', aera_order: 'AERA order \u00b7 draft' };
 function digits(p) { return String(p || '').replace(/[^\d]/g, ''); }
 function fmtWhen(iso) {
   if (!iso) return '';
@@ -1507,6 +1507,18 @@ function describe(a) {
     case 'calendar': return (a.title || 'Event') + '\n' + fmtWhen(a.start) + (a.place ? '\n' + a.place : '');
     case 'reminder': return (a.text || a.title || 'Reminder') + (a.start ? '\n' + fmtWhen(a.start) : '');
     case 'task': return (a.text || 'Task') + '\n' + [a.list ? 'List: ' + a.list : 'No list', a.start ? fmtWhen(a.start) : ''].filter(Boolean).join(' \u00b7 ');
+    case 'aera_order': {
+      const PAY = { transfer: 'Bank Transfer', cash: 'Cash', credit: 'AERA Credit', myacct: 'Customer Pays in My Account', unpaid: 'Not Paid yet' };
+      const d = /^\d{4}-\d{2}-\d{2}$/.test(a.date || '') ? new Date(a.date + 'T12:00:00+08:00') : null;
+      const day = d ? d.toLocaleDateString('en-GB', { timeZone: 'Asia/Kuala_Lumpur', weekday: 'short', day: 'numeric', month: 'short' }) : 'date not set';
+      const slot = a.slot ? String(a.slot).replace(/^(\d\d):00-(\d\d):00$/, (m, x, y) => (+x % 12 || 12) + '\u2013' + (+y % 12 || 12) + (+y >= 12 ? ' PM' : ' AM')) : '';
+      return [(a.to_name || 'New client') + [a.email, a.phone].filter(Boolean).map((x) => ' \u00b7 ' + x).join(''),
+        (a.items || []).map((i) => (i.qty || 1) + ' \u00d7 ' + (i.name || i.id)).join('\n') || 'No meals yet',
+        (a.fulfil === 'pickup' ? 'Pickup' : 'Delivery') + ' \u00b7 ' + day + (slot ? ' \u00b7 ' + slot : ''),
+        a.fulfil === 'pickup' ? '' : (a.address ? a.address : 'Address: fill in on the Kitchen Console'),
+        a.note ? 'Note: ' + a.note : '', 'Payment: ' + (PAY[a.pay] || 'Not Paid yet'),
+        'Prices, delivery fee and discounts are worked out by your Kitchen Console. Nothing is saved until you tap Save order there.'].filter(Boolean).join('\n');
+    }
     case 'claude': return 'Brief Nova wrote:\n' + (a.text || '') + '\n\n' + (isApplePhone() ? 'Nova copies the brief and opens Claude \u2014 tap Paste, then Send.' : 'Opens a new Claude chat with the brief typed in \u2014 check it, then Send.');
   }
   return JSON.stringify(a);
@@ -1516,7 +1528,7 @@ function icsEsc(t) { return String(t || '').replace(/[\\,;]/g, (m) => '\\' + m).
 // True once his "Nova Calendar Sync" Shortcut has sent the calendar at least once (so his Shortcuts are set up).
 var calShortcutReady = false;
 async function checkCalShortcut() { try { const { count } = await sb.from('nova_calendar').select('id', { count: 'exact', head: true }).eq('source', 'sync'); calShortcutReady = (count || 0) > 0 || localStorage.getItem('novaCalShortcut') === 'on'; if (calShortcutReady) localStorage.setItem('novaCalShortcut', 'on'); } catch {} }
-function appName(a) { return a.type === 'navigate' ? ({ google: 'Google Maps', apple: 'Apple Maps' }[a.app] || 'Waze') : ({ task: 'MinimaList', claude: 'Claude', call: 'Phone', sms: 'Messages', email: 'Mail', whatsapp: 'WhatsApp', voice: 'WhatsApp', calendar: 'Calendar', reminder: 'Calendar' }[a.type] || 'it'); }
+function appName(a) { return a.type === 'navigate' ? ({ google: 'Google Maps', apple: 'Apple Maps' }[a.app] || 'Waze') : ({ task: 'MinimaList', claude: 'Claude', call: 'Phone', sms: 'Messages', email: 'Mail', whatsapp: 'WhatsApp', voice: 'WhatsApp', calendar: 'Calendar', reminder: 'Calendar', aera_order: 'Kitchen Console' }[a.type] || 'it'); }
 function mapsApp() { return localStorage.getItem('novaMapsApp') === 'google' ? 'google' : 'waze'; }
 function isApplePhone() { return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
 // KL-time date and time for a +08:00 ISO string, as MinimaList wants them (yyyy-mm-dd, HH:mm).
@@ -1528,6 +1540,14 @@ function klParts(iso) {
 function runAction(a) {
   const enc = encodeURIComponent;
   switch (a.type) {
+    case 'aera_order': {
+      // Opens the Kitchen Console's + New Order with this draft filled in (its add-on "aera-kc-nova" reads it). Nothing is saved there until Boss taps Save order.
+      const d = { name: a.to_name || '', email: a.email || '', phone: a.phone || '', items: (a.items || []).map((i) => ({ kind: i.kind === 'bundle' ? 'bundle' : 'meal', id: String(i.id || ''), name: i.name || '', qty: Math.max(1, Math.round(+i.qty || 1)) })),
+        fulfil: a.fulfil === 'pickup' ? 'pickup' : 'delivery', date: a.date || '', slot: a.slot || '', address: a.address || '', note: a.note || '', pay: a.pay || 'unpaid' };
+      const b = btoa(unescape(encodeURIComponent(JSON.stringify(d)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      location.href = 'https://aeramealprep.net/kitchen/?app=no&nova=' + b + '#neworder';
+      return;
+    }
     case 'task': {
       // MinimaList's own link for creating a task (from its App Store page).
       const q = ['content=' + enc(a.text || '')];
@@ -1645,7 +1665,7 @@ function showAction(a, q) {
   const row = document.createElement('div'); row.className = 'row';
   const no = document.createElement('button'); no.type = 'button'; no.textContent = 'Cancel';
   no.style.cssText = 'background:none;border:1px solid var(--line);color:var(--text)';
-  const yes = document.createElement('button'); yes.type = 'button'; yes.textContent = a.type === 'calendar' ? 'Add to Calendar' : a.type === 'navigate' ? 'Open in ' + ({ google: 'Google Maps', apple: 'Apple Maps' }[a.app] || 'Waze') : a.type === 'task' ? 'Add to MinimaList' : a.type === 'claude' ? 'Open in Claude' : 'Confirm';
+  const yes = document.createElement('button'); yes.type = 'button'; yes.textContent = a.type === 'calendar' ? 'Add to Calendar' : a.type === 'navigate' ? 'Open in ' + ({ google: 'Google Maps', apple: 'Apple Maps' }[a.app] || 'Waze') : a.type === 'task' ? 'Add to MinimaList' : a.type === 'claude' ? 'Open in Claude' : a.type === 'aera_order' ? 'Open in Kitchen Console' : 'Confirm';
   if (a.type === 'navigate') { no.textContent = 'Not now'; yes.textContent = a.app === 'google' ? 'Google Maps' : a.app === 'apple' ? 'Apple Maps' : 'Waze'; }
   yes.style.cssText = 'background:var(--orange);border:0;color:#fff';
   const done = (txt) => { row.remove(); k.textContent = txt; card.style.borderColor = 'var(--line)'; };
