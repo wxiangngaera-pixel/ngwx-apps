@@ -235,7 +235,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1141i';
+const NOVA_BUILD = 'b20261126-1205m';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1332,6 +1332,7 @@ function icsEsc(t) { return String(t || '').replace(/[\\,;]/g, (m) => '\\' + m).
 // True once his "Nova Calendar Sync" Shortcut has sent the calendar at least once (so his Shortcuts are set up).
 var calShortcutReady = false;
 async function checkCalShortcut() { try { const { count } = await sb.from('nova_calendar').select('id', { count: 'exact', head: true }).eq('source', 'sync'); calShortcutReady = (count || 0) > 0 || localStorage.getItem('novaCalShortcut') === 'on'; if (calShortcutReady) localStorage.setItem('novaCalShortcut', 'on'); } catch {} }
+function mapsApp() { return localStorage.getItem('novaMapsApp') === 'google' ? 'google' : 'waze'; }
 function isApplePhone() { return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
 // KL-time date and time for a +08:00 ISO string, as MinimaList wants them (yyyy-mm-dd, HH:mm).
 function klParts(iso) {
@@ -1451,13 +1452,15 @@ async function sendByNova(entry) {
 function showAction(a, q) {
   const card = document.createElement('div');
   card.className = 'act';
+  // Directions: use his default maps app unless he named one (Google Maps / Apple Maps).
+  if (a.type === 'navigate' && a.app !== 'google' && a.app !== 'apple') a.app = mapsApp();
   const k = document.createElement('div'); k.className = 'k'; k.textContent = (q && q.readback) ? q.readback : (ACT_LABEL[a.type] || 'Action') + ' — tap to confirm';
   const d = document.createElement('div'); d.className = 'd'; d.textContent = describe(a);
   const row = document.createElement('div'); row.className = 'row';
   const no = document.createElement('button'); no.type = 'button'; no.textContent = 'Cancel';
   no.style.cssText = 'background:none;border:1px solid var(--line);color:var(--text)';
   const yes = document.createElement('button'); yes.type = 'button'; yes.textContent = a.type === 'calendar' ? 'Add to Calendar' : a.type === 'navigate' ? 'Open in ' + ({ google: 'Google Maps', apple: 'Apple Maps' }[a.app] || 'Waze') : a.type === 'task' ? 'Add to MinimaList' : a.type === 'claude' ? 'Open in Claude' : 'Confirm';
-  if (a.type === 'navigate') no.textContent = 'Not now';
+  if (a.type === 'navigate') { no.textContent = 'Not now'; yes.textContent = a.app === 'google' ? 'Google Maps' : a.app === 'apple' ? 'Apple Maps' : 'Waze'; }
   yes.style.cssText = 'background:var(--orange);border:0;color:#fff';
   const done = (txt) => { row.remove(); k.textContent = txt; card.style.borderColor = 'var(--line)'; };
   const entry = { a, done, card, settled: false, qid: q ? q.id : null };
@@ -1468,6 +1471,14 @@ function showAction(a, q) {
   pendingAction = entry;
   if (q) queueEntries.set(q.id, entry);
   row.append(no, yes);
+  if (a.type === 'navigate') {
+    // Second button: the other app, so he can pick at the last second.
+    const other = a.app === 'google' ? 'waze' : 'google';
+    const alt = document.createElement('button'); alt.type = 'button'; alt.textContent = other === 'google' ? 'Google Maps' : 'Waze';
+    alt.style.cssText = 'background:none;border:1px solid var(--orange);color:var(--orange)';
+    alt.addEventListener('click', () => { a.app = other; entry.confirm(); pendingAction = null; });
+    row.insertBefore(alt, yes);
+  }
   card.append(k, d);
   if (a.type === 'voice' && a.text) {
     // Listen before sending: plays the same words in the same voice. Nothing is sent. (~RM 0.10 per new listen; replays are free)
@@ -1717,6 +1728,7 @@ async function renderSettingsHome() {
   g3.append(
     row('🔊', 'Voice', v.charAt(0).toUpperCase() + v.slice(1) + ' ›', () => { closeSettings(); $('voicePickBtn').click(); }),
     row('📍', 'Location', locOn() ? 'On' : 'Off', () => $('locBtn').click(), locOn() ? 'var(--orange)' : ''),
+    row('🧭', 'Maps app', mapsApp() === 'google' ? 'Google Maps' : 'Waze', () => { localStorage.setItem('novaMapsApp', mapsApp() === 'google' ? 'waze' : 'google'); renderSettingsHome(); }),
     row('💬', 'WhatsApp (013-610 0205)', 'Link ›', () => { closeSettings(); $('linkWaBtn').click(); }),
   );
   body.appendChild(g3);
