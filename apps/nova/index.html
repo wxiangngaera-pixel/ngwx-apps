@@ -257,7 +257,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1430o';
+const NOVA_BUILD = 'b20261126-1445p';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1516,6 +1516,8 @@ function describe(a) {
         (a.items || []).map((i) => (i.qty || 1) + ' \u00d7 ' + (i.name || i.id)).join('\n') || 'No meals yet',
         (a.fulfil === 'pickup' ? 'Pickup' : 'Delivery') + ' \u00b7 ' + day + (slot ? ' \u00b7 ' + slot : ''),
         a.fulfil === 'pickup' ? '' : (a.address ? a.address : 'Address: fill in on the Kitchen Console'),
+        [{ bento: 'MAP Bento Box', vacuum: 'Vacuum Pack' }[a.pack] || 'Packaging: not set', { cooked: 'Cooked Weight', raw: 'Raw Weight' }[a.basis] || 'Weight: not set'].join(' \u00b7 '),
+        [{ normal: 'Normal Spice', less: 'Less Spicy', none: 'No Spice' }[a.spice] || 'Spice: not set', { normal: 'Normal Salt', less_salt: 'Less Salt', no_salt: 'No Salt' }[a.seas] || 'Salt: not set'].join(' \u00b7 '),
         a.note ? 'Note: ' + a.note : '', 'Payment: ' + (PAY[a.pay] || 'Not Paid yet'),
         'Prices, delivery fee and discounts are worked out by your Kitchen Console. Nothing is saved until you tap Save order there.'].filter(Boolean).join('\n');
     }
@@ -1543,7 +1545,7 @@ function runAction(a) {
     case 'aera_order': {
       // Opens the Kitchen Console's + New Order with this draft filled in (its add-on "aera-kc-nova" reads it). Nothing is saved there until Boss taps Save order.
       const d = { name: a.to_name || '', email: a.email || '', phone: a.phone || '', items: (a.items || []).map((i) => ({ kind: i.kind === 'bundle' ? 'bundle' : 'meal', id: String(i.id || ''), name: i.name || '', qty: Math.max(1, Math.round(+i.qty || 1)) })),
-        fulfil: a.fulfil === 'pickup' ? 'pickup' : 'delivery', date: a.date || '', slot: a.slot || '', address: a.address || '', note: a.note || '', pay: a.pay || 'unpaid' };
+        fulfil: a.fulfil === 'pickup' ? 'pickup' : 'delivery', date: a.date || '', slot: a.slot || '', address: a.address || '', note: a.note || '', pay: a.pay || 'unpaid', pack: a.pack || '', basis: a.basis || '', seas: a.seas || '', spice: a.spice || '' };
       const b = btoa(unescape(encodeURIComponent(JSON.stringify(d)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
       location.href = 'https://aeramealprep.net/kitchen/?app=no&nova=' + b + '#neworder';
       return;
