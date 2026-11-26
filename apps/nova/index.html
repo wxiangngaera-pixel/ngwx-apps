@@ -235,7 +235,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1140i';
+const NOVA_BUILD = 'b20261126-1141i';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1402,7 +1402,9 @@ async function icloud(body) {
   if (!r.ok || j.error) throw new Error(j.error || 'HTTP ' + r.status);
   return j;
 }
-function icloudSync() { icloud({ action: 'sync' }).then((j) => dbg('icloud sync ' + j.events), (e) => dbg('icloud sync err ' + e.message)); }
+let lastIcloudSync = 0;
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - lastIcloudSync > 300000) icloudSync(); });
+function icloudSync() { lastIcloudSync = Date.now(); icloud({ action: 'sync' }).then((j) => dbg('icloud sync ' + j.events), (e) => dbg('icloud sync err ' + e.message)); }
 async function sendByNova(entry) {
   const a = entry.a;
   if (a.type === 'calendar') {
