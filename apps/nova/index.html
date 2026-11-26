@@ -267,7 +267,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1520h';
+const NOVA_BUILD = 'b20261126-1525h';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1694,7 +1694,7 @@ function customerForm() {
     found.hidden = false; found.className = 'found'; found.innerHTML = '';
     for (const m of matches) {
       const b = document.createElement('button'); b.type = 'button'; if (m === picked) b.className = 'on';
-      b.textContent = (m === picked ? '✓ ' : '') + (m.name || m.email) + (m.phone ? ' · ' + m.phone : '') + '\n' + m.email + (m.last_order ? ' · last order ' + fmtDay(m.last_order) : '');
+      b.textContent = (m === picked ? '✓ ' : '') + (m.name || m.email) + (m.phone ? ' · ' + m.phone : '') + '\n' + m.email + (m.last_order ? ' · last order ' + cfDay(m.last_order) : '');
       b.style.whiteSpace = 'pre-line';
       b.addEventListener('click', () => { picked = m; em.value = m.email; matches = [m]; show(); });
       found.appendChild(b);
