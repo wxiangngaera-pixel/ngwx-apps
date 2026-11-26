@@ -114,6 +114,16 @@
   .sadd button{min-width:48px;min-height:44px;border-radius:12px;border:0;background:var(--purple);color:#fff;font-size:20px;cursor:pointer}
   .slist{display:flex;flex-direction:column;gap:8px}
   .vsheet .sec{font-size:11px;letter-spacing:1.5px;color:var(--orange);margin:18px 0 8px}
+  .cfwrap{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center}
+  .cform{width:100%;max-width:480px;background:var(--card);border:1px solid var(--line);border-bottom:0;border-radius:20px 20px 0 0;padding:18px 16px calc(env(safe-area-inset-bottom) + 18px);display:flex;flex-direction:column;gap:10px}
+  .cform .hd{display:flex;justify-content:space-between;align-items:center;font-size:17px;font-weight:600}
+  .cform .hd button{background:none;border:0;color:var(--muted);font-size:22px;cursor:pointer;min-width:44px;min-height:44px}
+  .cform .found{border-radius:10px;padding:10px;font-size:14px;line-height:1.45;background:rgba(80,200,120,.12);color:#7fd8a0}
+  .cform .found.bad{background:rgba(255,120,80,.12);color:var(--orange)}
+  .cform .found button{display:block;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);color:inherit;font:inherit;padding:8px 0;cursor:pointer}
+  .cform .found button:first-child{border-top:0}
+  .cform .found button.on{font-weight:600}
+  .cform .two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
   .vgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
   .vcard{border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;background:var(--card);color:var(--text);font:inherit;text-align:left}
   .vcard.on{border:1.5px solid var(--orange)}
@@ -257,7 +267,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1450h';
+const NOVA_BUILD = 'b20261126-1500h';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1009,6 +1019,7 @@ async function liveTool(me, name, args) {
       // Saved place: go to its exact saved spot, not a text search of the name.
       try { const { data } = await sb.from('nova_places').select('name,lat,lng').ilike('name', String(args.place).trim().replace(/[%_,()"]/g, '')).limit(1); if (data?.[0]) args = { ...args, place: data[0].name, lat: data[0].lat, lng: data[0].lng }; } catch {}
     }
+    if (args && args.type === 'customer_form') { customerForm(); return { ok: true, note: 'Form shown on his screen. Say one short line: who is this order for, type their email or just tell me. Then wait.' }; }
     showAction(args); return { ok: true, note: 'Card shown. Read it back in one short sentence and ask "Confirm?". Nothing happens until he confirms.' }; }
   if (name === 'end_call') { setTimeout(() => { if (live === me) liveStop('Live call ended'); }, 1800); return { ok: true }; }
   if (name === 'cancel_action') { if (pendingAction && !pendingAction.settled) pendingAction.cancel(); pendingAction = null; return { ok: true }; }
@@ -1656,8 +1667,82 @@ async function sendByNova(entry) {
     speak('Sorry Boss, it did not send. Tap to open WhatsApp instead.');
   }
 }
+// AERA order: a pop-up for typing the customer's email (Nova asks for it when it doesn't know who the order is for).
+function customerForm() {
+  if (document.getElementById('cfWrap')) return;
+  setView('chat');
+  const w = document.createElement('div'); w.className = 'cfwrap'; w.id = 'cfWrap';
+  w.innerHTML = '<div class="cform" role="dialog" aria-label="Who is this order for?">'
+    + '<div class="hd"><span>Who is this order for?</span><button type="button" id="cfX" aria-label="Close">×</button></div>'
+    + '<label for="cfEmail">Customer email</label>'
+    + '<input class="field" id="cfEmail" type="email" inputmode="email" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="name@gmail.com">'
+    + '<div class="found" id="cfFound" hidden></div>'
+    + '<div id="cfNew" hidden style="display:flex;flex-direction:column;gap:8px">'
+    + '<div class="note">Not a customer yet. Add their name and phone:</div>'
+    + '<input class="field" id="cfName" autocomplete="off" placeholder="Name">'
+    + '<input class="field" id="cfPhone" type="tel" inputmode="tel" autocomplete="off" placeholder="012-345 6789"></div>'
+    + '<div class="note" id="cfErr" style="color:var(--orange)" hidden></div>'
+    + '<div class="two"><button type="button" class="btn ghost" id="cfSay">Say it instead</button><button type="button" class="btn" id="cfUse" style="background:var(--orange)">Use this customer</button></div>'
+    + '</div>';
+  document.body.appendChild(w);
+  const em = $('cfEmail'), found = $('cfFound'), nw = $('cfNew'), err = $('cfErr');
+  let picked = null, matches = [], timer = 0, seq = 0;
+  const close = () => { clearTimeout(timer); w.remove(); };
+  const show = () => {
+    found.hidden = false; found.className = 'found'; found.innerHTML = '';
+    for (const m of matches) {
+      const b = document.createElement('button'); b.type = 'button'; if (m === picked) b.className = 'on';
+      b.textContent = (m === picked ? '✓ ' : '') + (m.name || m.email) + (m.phone ? ' · ' + m.phone : '') + '\n' + m.email + (m.last_order ? ' · last order ' + fmtDay(m.last_order) : '');
+      b.style.whiteSpace = 'pre-line';
+      b.addEventListener('click', () => { picked = m; show(); });
+      found.appendChild(b);
+    }
+  };
+  const look = async () => {
+    const q = em.value.trim(); err.hidden = true;
+    picked = null; matches = [];
+    if (q.length < 4) { found.hidden = true; nw.hidden = true; return; }
+    const my = ++seq;
+    found.hidden = false; found.className = 'found'; found.textContent = 'Looking up…';
+    try {
+      const j = await brainCall({ mode: 'tool', name: 'aera_customer', args: { query: q } });
+      if (my !== seq) return;
+      matches = (JSON.parse(j.output).matches || []);
+    } catch { if (my !== seq) return; matches = []; }
+    const exact = matches.find((m) => (m.email || '').toLowerCase() === q.toLowerCase());
+    if (exact) matches = [exact];
+    if (matches.length) { picked = matches.length === 1 ? matches[0] : null; show(); nw.hidden = true; }
+    else { found.className = 'found bad'; found.textContent = 'No AERA customer with that email.'; nw.hidden = false; }
+  };
+  em.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(look, 450); });
+  $('cfX').addEventListener('click', close);
+  w.addEventListener('click', (e) => { if (e.target === w) close(); });
+  $('cfSay').addEventListener('click', () => { close(); setState(null, 'Tap the mic to talk'); });
+  $('cfUse').addEventListener('click', () => {
+    const q = em.value.trim();
+    const bad = (t) => { err.textContent = t; err.hidden = false; };
+    if (!q) return bad('Type their email first.');
+    let msg;
+    if (picked) msg = 'The order is for ' + (picked.name || picked.email) + ' (email ' + picked.email + (picked.phone ? ', phone ' + picked.phone : '') + ').';
+    else if (matches.length > 1) return bad('Tap the right customer above.');
+    else {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(q)) return bad('That email doesn’t look right.');
+      const nm = $('cfName').value.trim(), ph = $('cfPhone').value.trim();
+      if (!nm || !ph) return bad('New customer: add their name and phone.');
+      msg = 'The order is for a new customer: ' + nm + ', email ' + q + ', phone ' + ph + '.';
+    }
+    close(); ask(msg);
+  });
+  setTimeout(() => em.focus(), 50);
+}
+function cfDay(iso) {
+  const d = new Date(String(iso).slice(0, 10) + 'T00:00:00+08:00'); if (isNaN(d)) return iso;
+  const n = d.getDate(), sfx = (n % 100 >= 11 && n % 100 <= 13) ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
+  return n + sfx + ' ' + d.toLocaleString('en-GB', { month: 'short', timeZone: 'Asia/Kuala_Lumpur' }) + ' ' + d.getFullYear();
+}
 function showAction(a, q) {
   if (!q) setView('chat');
+  if (a.type === 'customer_form') { customerForm(); return; }
   const card = document.createElement('div');
   card.className = 'act';
   // Directions: use his default maps app unless he named one (Google Maps / Apple Maps).
