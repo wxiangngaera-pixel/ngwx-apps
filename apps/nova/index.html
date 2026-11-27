@@ -284,7 +284,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261127-2230a';
+const NOVA_BUILD = 'b20261127-2240a';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -986,6 +986,12 @@ function liveSend(me, ev) { if (me.dc && me.dc.readyState === 'open') me.dc.send
 // Typed words (the chat box, the customer pop-up): during a live call they go into the live call, so it keeps the whole conversation.
 function tell(text) {
   if (!text) return;
+  if (!pendingFile && /文件|档案|檔案|上传|上載|发了|發了|\b(file|upload(ed)?|pdf|attach(ed)?)\b/i.test(text)) {
+    addMsg('me', text);
+    const r = OF && OF.plan ? 'Got it, Boss. The plan from your file is ready in the order form below. Scroll down to see the boxes.' : 'Boss, I don’t have a file yet. Tap 📎 to attach it, then tell me “build the meal plan”.';
+    addMsg('nova', r); history.push({ role: 'user', content: text }, { role: 'assistant', content: r }); saveOne('user', text); saveOne('assistant', r); try { speak(r); } catch {}
+    return;
+  }
   const me = live;
   if (me && me.dc && me.dc.readyState === 'open') {
     addMsg('me', text); history.push({ role: 'user', content: text }); history = history.slice(-30); saveOne('user', text);
@@ -2113,7 +2119,12 @@ async function ofBuildPlan() {
     F.plan = j; if (j.spice && !F.spice) F.spice = j.spice; if (j.seas && !F.seas) F.seas = j.seas; if (j.basis && !F.basis) F.basis = j.basis;
     const t = 'Plan ready, Boss: ' + j.boxes + ' box' + (j.boxes > 1 ? 'es' : '') + ' over ' + j.days + ' day' + (j.days > 1 ? 's' : '') + ', about RM ' + j.total_rm.toFixed(2) + ' for the meals.';
     const nq = ofQuestion(); OF.lastQ = nq; ofDraw(); const t2 = t + (nq ? ' ' + nq : '');
-    addMsg('nova', t2); history.push({ role: 'assistant', content: t2 }); saveOne('assistant', t2); try { speak(t2); } catch {}
+    // 27th Nov 2026 : show the plan itself in the chat too ( the order form starts at the customer step, so the boxes were out of sight )
+    const by = {}; j.meals.forEach((m) => { (by[m.day] = by[m.day] || []).push('Meal ' + m.slot + ': ' + m.comps.map((c) => c.name + ' ' + c.grams + 'g').join(' + ') + ' (RM ' + m.price.toFixed(2) + ')'); });
+    const list = Object.keys(by).map((d) => 'Day ' + d + '\n' + by[d].join('\n')).join('\n') +
+      ((j.home || []).length ? '\n\n🏠 Customer prepares at home\n' + j.home.map((x) => (x.slot ? 'Meal ' + x.slot : 'All day') + ': ' + x.items).join('\n') : '');
+    const t3 = t + '\n\n' + list + (nq ? '\n\n' + nq : '');
+    addMsg('nova', t3); history.push({ role: 'assistant', content: t3 }); saveOne('assistant', t3); try { speak(t2); } catch {}
   } catch (e) { if (OF === F) F.perr = 'Couldn’t build the plan: ' + (e.message || e); }
   finally { F.pbusy = false; if (OF === F) ofDraw(); }
 }
