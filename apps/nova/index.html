@@ -284,7 +284,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261127-1045a';
+const NOVA_BUILD = 'b20261127-1530a';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1079,12 +1079,19 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 
 // ---------- Link Boss's own WhatsApp (013-610 0205) to Nova, by QR ----------
 // The QR is shown here; scan it from WhatsApp on the phone with 013-610 0205: Settings → Linked devices → Link a device.
-let linkPoll = null;
-async function linkCall(name) { return brainCall({ mode: 'link', name }); }
+let linkPoll = null, linkLine = 'own'; // 27th Nov 2026 : 'own' = 013-610 0205, 'hotline' = AERA Hotline 016-663 0205
+async function linkCall(name) {
+  const { data: { session } } = await sb.auth.getSession();
+  const r = await fetch(SUPABASE_URL + '/functions/v1/nova-link', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SUPABASE_KEY, Authorization: 'Bearer ' + (session?.access_token || SUPABASE_KEY) }, body: JSON.stringify({ name, line: linkLine }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) throw new Error(j.error || 'HTTP ' + r.status);
+  return j;
+}
 $('linkWaBtn').addEventListener('click', async () => {
   if (linkPoll) return;
+  const HOT = linkLine === 'hotline', NUM = HOT ? '016-663 0205' : '013-610 0205';
   const card = document.createElement('div'); card.className = 'act';
-  const k = document.createElement('div'); k.className = 'k'; k.textContent = 'Link your WhatsApp to Nova';
+  const k = document.createElement('div'); k.className = 'k'; k.textContent = HOT ? 'Link the AERA Hotline to Nova' : 'Link your WhatsApp to Nova';
   const d = document.createElement('div'); d.className = 'd'; d.textContent = 'Starting…';
   const img = document.createElement('img'); img.alt = 'WhatsApp link QR code'; img.hidden = true;
   img.style.cssText = 'width:100%;max-width:280px;align-self:center;background:#fff;border-radius:12px;padding:10px';
@@ -1096,7 +1103,7 @@ $('linkWaBtn').addEventListener('click', async () => {
   cancel.addEventListener('click', () => stop('Cancelled — nothing was linked.'));
   try {
     const st0 = await linkCall('link_status');
-    if (st0.connected && st0.right_number) { stop('Already linked ✓ Nova sends WhatsApp from 013-610 0205.', true); return; }
+    if (st0.connected && st0.right_number) { stop('Already linked ✓ Nova reads and replies on ' + NUM + '.', true); return; }
     await linkCall('link_start');
   } catch (e) { stop('Could not start: ' + (e.message || e), true); return; }
   d.textContent = 'Getting the QR code…';
@@ -1104,14 +1111,14 @@ $('linkWaBtn').addEventListener('click', async () => {
     try {
       const st = await linkCall('link_status');
       if (st.connected) {
-        if (!st.right_number) { stop('That was a different WhatsApp (' + st.phone + '), not 013-610 0205. I unlinked it — please scan from the phone with 013-610 0205.'); return; }
-        stop('Linked ✓ Nova will now send WhatsApp from your own number, 013-610 0205 — only after you confirm.', true); speak('Linked, Boss.'); return;
+        if (!st.right_number) { stop('That was a different WhatsApp (' + st.phone + '), not ' + NUM + '. I unlinked it — please scan from the phone with ' + NUM + '.'); return; }
+        stop(HOT ? 'Linked ✓ Nova now reads the AERA Hotline 016-663 0205 and auto-replies as the AERA team (when reading is on).' : 'Linked ✓ Nova will now send WhatsApp from your own number, 013-610 0205 — only after you confirm.', true); speak('Linked, Boss.'); return;
       }
       if (st.qr && st.qr !== lastQr) {
         lastQr = st.qr;
         if (!QR) QR = (await import('https://esm.sh/qrcode@1.5.4')).default;
         img.src = await QR.toDataURL(st.qr, { margin: 1, width: 560 }); img.hidden = false;
-        d.textContent = 'On the phone with 013-610 0205: WhatsApp → Settings → Linked devices → Link a device, then scan this code.';
+        d.textContent = 'On the phone with ' + NUM + ': WhatsApp → Settings → Linked devices → Link a device, then scan this code.';
       }
       if (!st.bridge_alive && Date.now() - t0 > 20000) { stop('The WhatsApp link service is not responding right now. Try again later.'); return; }
       if (['qr_timeout', 'logged_out'].includes(st.state)) { stop('The code expired. Tap Link WhatsApp to try again.'); return; }
@@ -2491,7 +2498,8 @@ async function renderSettingsHome() {
     row('📍', 'Location', locOn() ? 'On' : 'Off', () => $('locBtn').click(), locOn() ? 'var(--orange)' : ''),
     row('🧭', 'Maps app', mapsApp() === 'google' ? 'Google Maps' : 'Waze', () => { localStorage.setItem('novaMapsApp', mapsApp() === 'google' ? 'waze' : 'google'); renderSettingsHome(); }),
     row('📖', 'Nova reads my WhatsApp', WA_ON == null ? '…' : WA_ON ? 'On' : 'Off', () => waSet(!WA_ON).then(renderSettingsHome), WA_ON ? '#22a861' : ''),
-    row('💬', 'WhatsApp (013-610 0205)', 'Link ›', () => { closeSettings(); $('linkWaBtn').click(); }),
+    row('💬', 'WhatsApp (013-610 0205)', 'Link ›', () => { closeSettings(); linkLine = 'own'; $('linkWaBtn').click(); }),
+    row('☎️', 'AERA Hotline (016-663 0205)', 'Link ›', () => { closeSettings(); linkLine = 'hotline'; $('linkWaBtn').click(); }),
   );
   body.appendChild(g3);
   const so = sel('button', 'srow', 'Sign out'); so.type = 'button'; so.style.justifyContent = 'center'; so.style.color = 'var(--muted)';
