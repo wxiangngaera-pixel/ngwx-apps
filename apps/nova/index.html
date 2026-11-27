@@ -154,6 +154,7 @@
   <div class="top">
     <div class="brand">NOVA</div>
     <div style="display:flex;gap:4px;align-items:center">
+      <button class="link" id="waBtn" hidden aria-label="Nova reads my WhatsApp" style="font-size:12px;font-weight:600;padding:0 10px;min-height:30px;border-radius:999px;background:rgba(127,127,127,.15)">💬 …</button>
       <button class="link" id="locBtn" hidden aria-label="Location" style="font-size:18px;min-width:40px">📍</button>
       <button class="link" id="settingsBtn" hidden aria-label="Settings" style="font-size:20px;min-width:40px">⚙︎</button>
       <button class="link" id="voicePickBtn" hidden>Voice</button>
@@ -283,7 +284,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261126-1850a';
+const NOVA_BUILD = 'b20261127-1045a';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -414,6 +415,7 @@ async function showScreen() {
   $('linkWaBtn').hidden = true;
   $('voicePickBtn').hidden = true;
   $('locBtn').hidden = !session;
+  $('waBtn').hidden = !session; if (session) waLoad();
   $('settingsBtn').hidden = !session;
   if (session && locOn()) refreshLoc();
   if (session) icloudSync();
@@ -2440,6 +2442,24 @@ function closeSettings() { $('settingsSheet').hidden = true; if (queueRefresh) {
 $('settingsBtn').addEventListener('click', openSettings);
 $('setDone').addEventListener('click', closeSettings);
 $('setBack').addEventListener('click', renderSettingsHome);
+// ---------- 27th Nov 2026 : one switch for Nova's WhatsApp ( reads text, voice notes, images, PDFs and replies or holds ) ----------
+let WA_ON = null;
+function waPaint() {
+  const b = $('waBtn'); if (!b) return;
+  b.textContent = WA_ON == null ? '💬 …' : WA_ON ? '💬 Reading on' : '💬 Reading off';
+  b.style.background = WA_ON ? 'rgba(34,168,97,.16)' : 'rgba(127,127,127,.15)'; b.style.color = WA_ON ? '#22a861' : 'var(--muted)';
+}
+async function waLoad() {
+  try { const j = await brainCall({ mode: 'tool', name: 'whatsapp_auto_reply', args: {} }); WA_ON = !!JSON.parse(j.output).auto_reply; } catch { WA_ON = null; }
+  waPaint();
+}
+async function waSet(on) {
+  const was = WA_ON; WA_ON = on; waPaint();
+  try { const j = await brainCall({ mode: 'tool', name: 'whatsapp_auto_reply', args: { on } }); WA_ON = !!JSON.parse(j.output).auto_reply; }
+  catch { WA_ON = was; waPaint(); $('waBtn').textContent = '💬 Try again'; return; }
+  waPaint();
+}
+$('waBtn').addEventListener('click', () => waSet(!WA_ON));
 function row(icon, label, value, onClick, color) {
   const b = sel('button', 'srow'); b.type = 'button';
   b.appendChild(sel('span', '', icon + '  ' + label));
@@ -2470,6 +2490,7 @@ async function renderSettingsHome() {
     row('🔊', 'Voice', v.charAt(0).toUpperCase() + v.slice(1) + ' ›', () => { closeSettings(); $('voicePickBtn').click(); }),
     row('📍', 'Location', locOn() ? 'On' : 'Off', () => $('locBtn').click(), locOn() ? 'var(--orange)' : ''),
     row('🧭', 'Maps app', mapsApp() === 'google' ? 'Google Maps' : 'Waze', () => { localStorage.setItem('novaMapsApp', mapsApp() === 'google' ? 'waze' : 'google'); renderSettingsHome(); }),
+    row('📖', 'Nova reads my WhatsApp', WA_ON == null ? '…' : WA_ON ? 'On' : 'Off', () => waSet(!WA_ON).then(renderSettingsHome), WA_ON ? '#22a861' : ''),
     row('💬', 'WhatsApp (013-610 0205)', 'Link ›', () => { closeSettings(); $('linkWaBtn').click(); }),
   );
   body.appendChild(g3);
