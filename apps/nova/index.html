@@ -284,7 +284,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261127-2210a';
+const NOVA_BUILD = 'b20261127-2230a';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -710,7 +710,7 @@ async function ask(text) {
 async function askAudio(b64, mime) {
   if (busy) return;
   if (pendingFile) {
-    try { setState('thinking', 'Listening…'); const j = await brainCall({ mode: 'transcribe', audio: b64, mime }); const h = (j.heard || '').trim(); if (OF_PLANWORDS.test(h)) planFromFile(h); else reviewFile(h); }
+    try { setState('thinking', 'Listening…'); const j = await brainCall({ mode: 'transcribe', audio: b64, mime }); const h = (j.heard || '').trim(); if (wantsPlan(h)) planFromFile(h); else reviewFile(h); }
     catch (err) { addMsg('err', 'Nova had a problem: ' + (err.message || err)); setState(null, 'Tap the mic to talk'); }
     return;
   }
@@ -1806,7 +1806,7 @@ const OF_SLOTS = [['09:00-11:00', '9 – 11 AM'], ['11:00-13:00', '11 AM – 1 P
 const OF_STATES = ['Selangor', 'Kuala Lumpur', 'Putrajaya', 'Negeri Sembilan', 'Melaka', 'Johor', 'Perak', 'Pahang', 'Penang', 'Kedah', 'Perlis', 'Kelantan', 'Terengganu', 'Sabah', 'Sarawak', 'Labuan'];
 const OF_PAY = [['cash', 'Cash'], ['transfer', 'Online Banking'], ['sponsored', 'Sponsored'], ['send', 'Send to customer to pay']];
 let OF = null;
-const OF_PLANWORDS = /\b(meal ?plan|plan|order)\b|餐单|配餐|订单|pelan|pesanan|tempahan/i;
+const OF_PLANWORDS = /\b(meals?|plans?|planning|order|nutrition|diet|coach)\b|餐|计划|計劃|规划|饮食|營養|营养|订单|訂單|pelan|pesanan|tempahan|makanan/i;
 function ofDate(n) { const d = new Date(Date.now() + 8 * 3600e3 + n * 864e5); return d.toISOString().slice(0, 10); }
 function ofEsc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 // Nova (voice) can pass what Boss already said; it is merged into the open form.
@@ -2776,12 +2776,17 @@ $('fileIn').addEventListener('change', () => {
   rd.onload = () => {
     pendingFile = { b64: String(rd.result).split(',')[1], mime: f.type, name: f.name };
     $('fileName').textContent = '📎 ' + f.name; $('fileChip').hidden = false;
-    setState(null, 'Say or type “review this”, or tap Review');
+    setState(null, 'Say “build the meal plan” or “review this”, or tap Review');
   };
   rd.readAsDataURL(f);
 });
 $('fileX').addEventListener('click', () => { pendingFile = null; $('fileChip').hidden = true; setState(null, 'Tap the mic to talk'); });
-$('fileGo').addEventListener('click', () => { unlockVoice(); reviewFile('Nova, review this'); });
+$('fileGo').addEventListener('click', () => { unlockVoice(); if (wantsPlan('')) planFromFile('Build the meal plan from this'); else reviewFile('Nova, review this'); });
+// 27th Nov 2026 : a file goes to the meal plan builder when Boss asks for a plan now, or asked for one in his last few messages ( e.g. "I'll send you a file, plan the meals" → attach → "看看" )
+function wantsPlan(t) {
+  if (/\b(review|check)\b|审核|檢查|检查/i.test(t) && !OF_PLANWORDS.test(t)) return false;
+  return OF_PLANWORDS.test(t) || history.slice(-6).some((m) => m.role === 'user' && OF_PLANWORDS.test(String(m.content || '')));
+}
 
 function reviewText(r) {
   const L = [];
@@ -2855,7 +2860,7 @@ $('typeForm').addEventListener('submit', (e) => {
   unlockVoice();
   const t = $('typed').value.trim();
   $('typed').value = '';
-  if (pendingFile) { if (OF_PLANWORDS.test(t)) planFromFile(t); else reviewFile(t); return; }
+  if (pendingFile) { if (wantsPlan(t)) planFromFile(t); else reviewFile(t); return; }
   tell(t);
 });
 </script>
