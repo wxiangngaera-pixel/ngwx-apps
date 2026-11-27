@@ -284,7 +284,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261128-0715a';
+const NOVA_BUILD = 'b20261128-0730a';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1027,9 +1027,26 @@ function liveStop(note) {
 function liveIdle(me) { clearTimeout(me.idle); me.idle = setTimeout(() => { if (live === me) liveStop('Live call ended (quiet for 90 s)'); }, LIVE_IDLE_MS); }
 function liveSend(me, ev) { if (me.dc && me.dc.readyState === 'open') me.dc.send(JSON.stringify(ev)); }
 // Typed words (the chat box, the customer pop-up): during a live call they go into the live call, so it keeps the whole conversation.
+// ---- 28th Nov 2026 : Nova ↔ MacBook ( Nova Mac Helper ) ----
+const MAC_WORDS = /\b(mac|macbook|laptop|my downloads|downloads folder|my desktop|desktop folder|my documents|finder|my screen|on screen)\b|电脑|屏幕|桌面|下载|文件夹|komputer|skrin/i;
+const MAC_TOOL_LIVE = { type: 'function', name: 'mac', description: 'Do something on Boss\'s MacBook ( Nova Mac Helper ): find / list / open / read files in Downloads, Desktop, Documents; open apps or websites; look at his screen ( only when he asks ); run a Mac Shortcut; move / rename / trash a file ( the Mac asks him Allow first ). read attaches PDFs and images in his Nova chat.',
+  parameters: { type: 'object', properties: { kind: { type: 'string', enum: ['find', 'list', 'open', 'read', 'screen', 'shortcut', 'move', 'rename', 'trash'] }, query: { type: 'string' }, path: { type: 'string' }, app: { type: 'string' }, url: { type: 'string' }, name: { type: 'string' }, to: { type: 'string' } }, required: ['kind'] } };
+async function macDo(body) {
+  const { data: { session } } = await sb.auth.getSession();
+  const r = await fetch(SUPABASE_URL + '/functions/v1/nova-macdo', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SUPABASE_KEY, Authorization: 'Bearer ' + (session?.access_token || '') }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status); return j;
+}
+async function macAsk(text) {
+  addMsg('me', text); history.push({ role: 'user', content: text }); history = history.slice(-30); saveOne('user', text);
+  setState('thinking', 'Asking your Mac…');
+  try { const j = await macDo({ mode: 'ask', text }); novaSay(j.say || 'Done, Boss.'); }
+  catch (e) { addMsg('err', 'Nova couldn’t reach your Mac: ' + (e.message || e)); }
+  finally { setState(null, 'Tap the mic to talk'); }
+}
 function tell(text) {
   if (!text) return;
   if (OF && OF.localQ && ofLocalAnswer(text)) return;
+  if (!pendingFile && MAC_WORDS.test(text) && !(live && live.dc && live.dc.readyState === 'open')) { macAsk(text); return; }
   if (!pendingFile && /文件|档案|檔案|上传|上載|发了|發了|\b(file|upload(ed)?|pdf|attach(ed)?)\b/i.test(text)) {
     addMsg('me', text);
     const r = OF && OF.plan ? 'Got it, Boss. The plan from your file is ready in the order form below. Scroll down to see the boxes.' : 'Boss, I don’t have a file yet. Tap 📎 to attach it, then tell me “build the meal plan”.';
@@ -1057,6 +1074,12 @@ function liveInterrupt(me) {
 async function onLive(me, ev) {
   if (!/delta$/.test(ev.type)) dbg('live ev ' + ev.type + (ev.type === 'response.done' ? ' ' + (ev.response?.status || '') + ' ' + (ev.response?.status_details?.reason || ev.response?.status_details?.error?.message || '') : '') + (ev.type === 'error' ? ' ' + (ev.error?.message || '') : ''));
   switch (ev.type) {
+    case 'session.created': {
+      // 28th Nov 2026 : give the live voice the MacBook tool too ( keeps all its other tools )
+      const t = (ev.session && ev.session.tools) || [];
+      if (!t.some((x) => x.name === 'mac')) liveSend(me, { type: 'session.update', session: { type: 'realtime', tools: [...t, MAC_TOOL_LIVE] } });
+      break;
+    }
     case 'input_audio_buffer.speech_started':
       liveIdle(me); setState('listening', 'Live — listening'); break;
     case 'input_audio_buffer.committed':
@@ -1113,6 +1136,7 @@ async function liveTool(me, name, args) {
     if (args && (args.type === 'order_form' || args.type === 'customer_form')) { orderForm(args); const q = await ofNextQ();
       return { ok: true, note: q ? 'Form updated. Now ask him exactly this, in his language, and nothing else: "' + q + '" When he answers, call prepare_action type order_form with just that answer.' : 'Form updated. Say "Okay Boss." and wait.' }; }
     showAction(args); return { ok: true, note: 'Card shown. Read it back in one short sentence and ask "Confirm?". Nothing happens until he confirms.' }; }
+  if (name === 'mac') { try { return await macDo({ mode: 'run', args }); } catch (e) { return { error: String(e.message || e) }; } }
   if (name === 'end_call') { setTimeout(() => { if (live === me) liveStop('Live call ended'); }, 1800); return { ok: true }; }
   if (name === 'cancel_action') { if (pendingAction && !pendingAction.settled) pendingAction.cancel(); pendingAction = null; return { ok: true }; }
   if (name === 'confirm_action') {
