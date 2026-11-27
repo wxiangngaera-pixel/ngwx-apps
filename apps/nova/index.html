@@ -284,7 +284,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261128-0700a';
+const NOVA_BUILD = 'b20261128-0700b';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -2782,21 +2782,26 @@ async function count(table, filter) {
   const { count: n } = await q; return n ?? 0;
 }
 // ---- 28th Nov 2026 : notifications on this device ( iPhone: Nova must be opened from the Home Screen ) ----
-const PUSH_PUBLIC = 'BOmqT7DJGIWZJdcNVFVyLCVG-vtsO-CHwIdlVGAD3y9IzKcdev5ONMRlYDFlbhcVlX9rtaq81Sv59mdg03gbx2M';
+const PUSH_PUBLIC = 'BL685VA3gcOk-AKyIGm7BJzlfLYVfXX0Nn1iCqTX01TORt3p-PmYcYgmuHbY-rKPhJxJBgv6GCfDZlrxhEdY950';
 const pushOk = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 function pushState() { if (!pushOk()) return 'unsupported'; return Notification.permission === 'granted' && localStorage.getItem('novaPushOn') === '1' ? 'on' : Notification.permission === 'denied' ? 'blocked' : 'off'; }
-if (pushOk()) navigator.serviceWorker.register('sw.js').catch((e) => dbg('sw err ' + e.message));
+if (pushOk()) navigator.serviceWorker.register('sw.js').then(() => {
+  // the key pair changed since this device signed up: sign up again quietly ( permission is already given )
+  if (localStorage.getItem('novaPushOn') === '1' && Notification.permission === 'granted' && localStorage.getItem('novaPushKey') !== PUSH_PUBLIC) setTimeout(() => pushOn().then((ok) => ok && dbg('push re-signed')).catch((e) => dbg('push resign err ' + e.message)), 3000);
+}).catch((e) => dbg('sw err ' + e.message));
 async function pushOn() {
   if (!pushOk()) { addMsg('err', 'This browser can’t get notifications. On iPhone, open Nova from its Home Screen icon.'); return false; }
   const perm = await Notification.requestPermission(); if (perm !== 'granted') { addMsg('err', 'Notifications are blocked for Nova. Turn them on in iPhone Settings → Notifications → Nova.'); return false; }
   const reg = await navigator.serviceWorker.ready;
   const key = Uint8Array.from(atob(PUSH_PUBLIC.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - PUSH_PUBLIC.length % 4) % 4)), (c) => c.charCodeAt(0));
   let sub = await reg.pushManager.getSubscription();
+  // a new key pair → the old sign-up is dead; sign up again
+  if (sub && localStorage.getItem('novaPushKey') !== PUSH_PUBLIC) { const old = sub.endpoint; await sub.unsubscribe().catch(() => {}); sb.from('nova_push_subs').delete().eq('endpoint', old).then(() => {}); sub = null; }
   if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
   const j = sub.toJSON();
   const { error } = await sb.from('nova_push_subs').upsert({ endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, device: DEV }, { onConflict: 'endpoint' });
   if (error) { addMsg('err', 'Couldn’t save this device: ' + error.message); return false; }
-  localStorage.setItem('novaPushOn', '1'); return true;
+  localStorage.setItem('novaPushOn', '1'); localStorage.setItem('novaPushKey', PUSH_PUBLIC); return true;
 }
 async function pushTest() {
   const { data: { session } } = await sb.auth.getSession();
