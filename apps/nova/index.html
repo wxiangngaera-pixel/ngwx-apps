@@ -284,7 +284,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261128-0700b';
+const NOVA_BUILD = 'b20261128-0715a';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -928,6 +928,24 @@ setInterval(liveHoldSync, 400);
 function liveSay(text) { const me = live; if (!me || !me.dc || me.dc.readyState !== 'open') return; (me.sayQ = me.sayQ || []).push(text); if (!me.busyResp) liveFlush(me); }
 function liveFlush(me) { if (!me.sayQ || !me.sayQ.length || me.busyResp) return; const text = me.sayQ.splice(0).join(' '); me.busyResp = true;
   liveSend(me, { type: 'response.create', response: { metadata: { nova: 'say' }, instructions: 'Read this out loud exactly as written, in its own language, and say nothing else: ' + text } }); }
+// ---- 28th Nov 2026 : a file Nova fetched from the MacBook ( Mac Helper "read" ) lands here like an attachment ----
+let macSince = new Date(Date.now() - 60e3).toISOString();
+async function macFilesCheck() {
+  if (document.visibilityState !== 'visible' || !sb) return;
+  const { data } = await sb.from('nova_mac_jobs').select('id,result,done_at').eq('kind', 'read').eq('status', 'done').gt('done_at', macSince).order('done_at').limit(3);
+  for (const j of data || []) {
+    macSince = j.done_at; const r = j.result || {}; if (!r.path) continue;
+    try {
+      const { data: u } = await sb.storage.from('nova-mac').createSignedUrl(r.path, 120); if (!u) continue;
+      const buf = new Uint8Array(await (await fetch(u.signedUrl)).arrayBuffer()); let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+      pendingFile = { b64: btoa(bin), mime: r.mime || 'application/octet-stream', name: r.name || 'file' };
+      $('fileName').textContent = '📎 ' + pendingFile.name; $('fileChip').hidden = false;
+      meSay('📎 ' + pendingFile.name + ' (from your Mac)');
+      if (/^(application\/pdf|image\/)/.test(pendingFile.mime)) peekFile(pendingFile);
+    } catch (e) { dbg('mac file err ' + (e.message || e)); }
+  }
+}
+setInterval(() => macFilesCheck().catch(() => {}), 4000);
 // a note for the live voice ( it can't see files ): what the app is doing right now
 function liveNote(text) { const me = live; if (!me || !me.dc || me.dc.readyState !== 'open') return;
   liveSend(me, { type: 'conversation.item.create', item: { type: 'message', role: 'system', content: [{ type: 'input_text', text: 'NOVA APP NOTE: ' + text + ' Never tell Boss you did not get a file; the app has it. If he asks, say yes, you have it, and carry on.' }] } }); }
