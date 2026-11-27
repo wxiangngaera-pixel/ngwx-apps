@@ -284,7 +284,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261127-1530a';
+const NOVA_BUILD = 'b20261127-1130a';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1080,13 +1080,15 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 // ---------- Link Boss's own WhatsApp (013-610 0205) to Nova, by QR ----------
 // The QR is shown here; scan it from WhatsApp on the phone with 013-610 0205: Settings → Linked devices → Link a device.
 let linkPoll = null, linkLine = 'own'; // 27th Nov 2026 : 'own' = 013-610 0205, 'hotline' = AERA Hotline 016-663 0205
-async function linkCall(name) {
+// nova-link ( 27th Nov 2026 ): linking, reading switches and proof checks, locked to Boss's account
+async function novaLink(body) {
   const { data: { session } } = await sb.auth.getSession();
-  const r = await fetch(SUPABASE_URL + '/functions/v1/nova-link', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SUPABASE_KEY, Authorization: 'Bearer ' + (session?.access_token || SUPABASE_KEY) }, body: JSON.stringify({ name, line: linkLine }) });
+  const r = await fetch(SUPABASE_URL + '/functions/v1/nova-link', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SUPABASE_KEY, Authorization: 'Bearer ' + (session?.access_token || SUPABASE_KEY) }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok || j.error) throw new Error(j.error || 'HTTP ' + r.status);
   return j;
 }
+async function linkCall(name) { return novaLink({ name, line: linkLine }); }
 $('linkWaBtn').addEventListener('click', async () => {
   if (linkPoll) return;
   const HOT = linkLine === 'hotline', NUM = HOT ? '016-663 0205' : '013-610 0205';
@@ -1669,6 +1671,79 @@ async function icloud(body) {
 let lastIcloudSync = 0;
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - lastIcloudSync > 300000) icloudSync(); });
 function icloudSync() { lastIcloudSync = Date.now(); icloud({ action: 'sync' }).then((j) => dbg('icloud sync ' + j.events), (e) => dbg('icloud sync err ' + e.message)); }
+// ---------- 27th Nov 2026 ( Peter ) : proof. After a task, Nova reads the result back from where it landed and shows it. ----------
+function klTime(iso) { try { return new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kuala_Lumpur', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(iso)).toUpperCase(); } catch { return ''; } }
+function proofBox(entry, kind) {
+  const box = document.createElement('div');
+  box.style.cssText = 'display:grid;gap:6px;margin-top:4px;padding:10px 12px;border-radius:12px;border:1px solid var(--line);font-size:14px';
+  const h = document.createElement('div'); h.style.fontWeight = '600';
+  const set = (k, title) => { kind = k; h.textContent = (k === 'ok' ? '✅ ' : k === 'warn' ? '⚠️ ' : '… ') + title; h.style.color = k === 'ok' ? '#22a861' : k === 'warn' ? 'var(--orange)' : 'var(--muted)'; };
+  const line = (t, cls) => { const d = document.createElement('div'); d.textContent = t; if (cls === 'q') d.style.cssText = 'background:rgba(34,168,97,.12);border-radius:10px;padding:8px 10px;white-space:pre-wrap'; else if (cls === 'm') d.style.cssText = 'color:var(--muted);font-size:13px'; box.appendChild(d); return d; };
+  const btn = (t, fn) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = t; b.style.cssText = 'justify-self:start;background:none;border:1px solid var(--line);color:var(--text);border-radius:10px;min-height:36px;padding:0 12px;font:inherit;cursor:pointer'; b.addEventListener('click', fn); box.appendChild(b); return b; };
+  box.appendChild(h); entry.card.appendChild(box); set(kind || 'wait', 'Checking…');
+  return { set, line, btn, box };
+}
+// WhatsApp: WhatsApp's own message id, then the ticks ( delivered / read ) as they arrive, for up to 2 minutes.
+function proofWhatsApp(entry, data) {
+  const a = entry.a, P = proofBox(entry, 'wait');
+  const name = a.to_name ? a.to_name + ' · ' : '';
+  P.line('To ' + name + (data.to || a.to) + ' · from ' + (data.from || '013-610 0205'), 'm');
+  P.line(a.type === 'voice' ? '🎤 Voice note: “' + a.text + '”' : '“' + a.text + '”', 'q');
+  const st = P.line('', 'm');
+  P.btn('Open chat', () => { location.href = 'https://wa.me/' + digits(data.to || a.to); });
+  const paint = (r) => {
+    const tick = r.tick === 'read' ? 'Read ✓✓' : r.tick === 'delivered' ? 'Delivered ✓✓' : r.status === 'sent' ? 'Sent ✓' : r.status === 'failed' ? 'Failed' : 'Waiting to go out';
+    if (r.status === 'failed') { P.set('warn', 'Not sent'); st.textContent = r.error || 'WhatsApp could not send it'; return true; }
+    if (r.status !== 'sent') { P.set('wait', 'Queued'); st.textContent = 'Not out yet — I’ll keep checking'; return false; }
+    P.set('ok', 'Sent · proof');
+    st.textContent = 'WhatsApp confirmed it' + (r.at ? ' at ' + klTime(r.at) : '') + ' · ' + tick + (r.wa_id ? ' · ID ' + String(r.wa_id).slice(-6) : '');
+    return r.tick === 'read';
+  };
+  if (!data.id) { P.set(data.status === 'sent' ? 'ok' : 'warn', data.status === 'sent' ? 'Sent' : 'Can’t confirm'); st.textContent = 'WhatsApp didn’t give a message ID, so open the chat to check.'; return; }
+  paint({ status: data.status, wa_id: data.wa_id, at: data.at });
+  let n = 0; const t = setInterval(async () => {
+    n++; try { if (paint(await novaLink({ name: 'wa_proof', id: data.id })) || n >= 24) clearInterval(t); } catch { if (n >= 24) clearInterval(t); }
+  }, 5000);
+}
+// AERA: read the record back from AERA ( not from Nova's own memory of the change ) and compare every field he asked to change.
+async function proofAera(entry) {
+  const a = entry.a, P = proofBox(entry, 'wait');
+  P.line(String(a.summary || ''), 'm');
+  try {
+    const j = await novaLink({ name: 'aera_read', source: a.source, id: a.record_id });
+    const rec = (j.rows || [])[0];
+    if (!rec) { P.set('warn', 'Can’t find the record'); P.line('AERA has no ' + a.source + ' record ' + a.record_id + ' right now.'); return; }
+    let bad = 0;
+    const same = (x, y) => { if (y && typeof y === 'object' && !Array.isArray(y)) return x && typeof x === 'object' && Object.keys(y).every((k) => same(x[k], y[k])); return JSON.stringify(x) === JSON.stringify(y) || String(x) === String(y); };
+    for (const [k, v] of Object.entries(a.set || {})) {
+      const now = rec[k], ok = same(now, v); if (!ok) bad++;
+      P.line((ok ? '✓ ' : '✗ ') + k + ': ' + (ok ? 'now ' : 'AERA shows ') + JSON.stringify(now) + (ok ? '' : ' (asked for ' + JSON.stringify(v) + ')'));
+    }
+    P.set(bad ? 'warn' : 'ok', bad ? 'AERA doesn’t match' : 'Changed in AERA · proof');
+    P.line('Read back from AERA ' + a.source.replace(/^(coll|table):/, '') + ' · ' + a.record_id + (rec.updated_at ? ' · saved ' + klTime(rec.updated_at) : ''), 'm');
+    P.btn('Open in Kitchen Console', () => { location.href = 'https://aeramealprep.net/kitchen/?app=no'; });
+  } catch (e) { P.set('warn', 'Couldn’t check'); P.line('Reading it back failed: ' + (e.message || e) + '. Please check AERA yourself this once.'); }
+}
+// Calendar: refresh Nova's copy of his iPhone Calendar and look for the event.
+async function proofCalendar(entry) {
+  const a = entry.a, P = proofBox(entry, 'wait');
+  try {
+    await icloud({ action: 'sync' }).catch(() => {});
+    const t0 = new Date(new Date(a.start).getTime() - 60000).toISOString(), t1 = new Date(new Date(a.start).getTime() + 60000).toISOString();
+    const { data } = await sb.from('nova_calendar').select('title,start_at,end_at,calendar').gte('start_at', t0).lte('start_at', t1).limit(10);
+    const ev = (data || []).find((e) => String(e.title || '').trim() === String(a.title || '').trim()) || (data || [])[0];
+    if (!ev) { P.set('warn', 'Not found yet'); P.line('I added it, but I can’t see it in your calendar yet. Check Calendar for ' + (a.title || 'the event') + ' at ' + klTime(a.start) + '.'); return; }
+    P.set('ok', 'In your iPhone Calendar · proof');
+    P.line(ev.title + ' · ' + cfDay(ev.start_at.slice(0, 10)) + ', ' + klTime(ev.start_at) + (ev.end_at ? ' – ' + klTime(ev.end_at) : '') + (ev.calendar ? ' · ' + ev.calendar : ''));
+    P.line('Found in your calendar just now', 'm');
+  } catch (e) { P.set('warn', 'Couldn’t check'); P.line('Checking your calendar failed: ' + (e.message || e)); }
+}
+// Things Nova can't look into ( MinimaList, Claude, phone apps ): say so plainly instead of claiming it's done.
+function proofCant(entry) {
+  const a = entry.a; if (!['task', 'claude', 'sms', 'email', 'call', 'aera_order'].includes(a.type)) return;
+  const P = proofBox(entry, 'warn'); P.set('warn', 'Can’t check');
+  P.line(appName(a) + ' doesn’t let Nova look back, so please glance once' + (a.type === 'task' ? ' that “' + (a.text || '') + '” is in your list.' : '.'), 'm');
+}
 async function sendByNova(entry) {
   const a = entry.a;
   if (a.type === 'aera_change') {
@@ -1677,8 +1752,8 @@ async function sendByNova(entry) {
       const { data, error } = await sb.functions.invoke('nova-brain', { body: { mode: 'execute', action: a } });
       if (error) { let m = error.message; try { const b = await error.context?.json(); if (b?.error) m = b.error; } catch {} throw new Error(m); }
       if (data.error) throw new Error(data.error);
-      entry.done('Changed \u2713 in AERA' + (data.after ? '\n' + Object.entries(data.after).map(([k, v]) => k + ': ' + JSON.stringify(data.before?.[k]) + ' \u2192 ' + JSON.stringify(v)).join('\n') : ''));
-      speak('Done, Boss.');
+      entry.done('Changed in AERA' + (data.after ? '\n' + Object.entries(data.after).map(([k, v]) => k + ': ' + JSON.stringify(data.before?.[k]) + ' \u2192 ' + JSON.stringify(v)).join('\n') : ''));
+      speak('Done, Boss. Proof is on screen.'); proofAera(entry);
     } catch (e) { entry.done('Not changed: ' + (e.message || e)); speak('Sorry Boss, that didn\u2019t go through.'); }
     return;
   }
@@ -1686,7 +1761,7 @@ async function sendByNova(entry) {
     entry.done('Adding\u2026');
     try {
       const j = await icloud({ action: 'add', event: { title: a.title, start: a.start, end: a.end, place: a.place } });
-      entry.done('Added \u2713 to your iPhone Calendar' + (j.calendar ? ' (' + j.calendar + ')' : '')); speak('Added, Boss.');
+      entry.done('Added to your iPhone Calendar' + (j.calendar ? ' (' + j.calendar + ')' : '')); speak('Added, Boss. Proof is on screen.'); proofCalendar(entry);
     } catch (e) {
       dbg('icloud add err ' + e.message);
       entry.done('Not added: ' + e.message);
@@ -1707,10 +1782,11 @@ async function sendByNova(entry) {
     const { data, error } = await sb.functions.invoke('nova-brain', { body: { mode: 'execute', action: a, voice: localStorage.getItem('novaLiveVoice') || 'marin' } });
     if (error) { let m = error.message; try { const b = await error.context?.json(); if (b?.error) m = b.error; } catch {} throw new Error(m); }
     if (data.error) throw new Error(data.error);
-    const from = 'your WhatsApp (013-610 0205)';
-    if (data.status === 'sent') { entry.done('Sent \u2713 from ' + from); speak('Sent, Boss.'); }
+    const from = 'your WhatsApp (' + (data.from || '013-610 0205') + ')';
+    if (data.status === 'sent') { entry.done('Sent from ' + from); speak('Sent, Boss. Proof is on screen.'); }
     else if (data.status === 'failed') throw new Error(data.error || 'WhatsApp could not send it');
     else { entry.done('Queued \u2014 sending from ' + from + ' shortly'); speak('Queued, Boss. It will go out shortly.'); }
+    proofWhatsApp(entry, data);
     if (entry.qid) { await queueMark(entry.qid, 'sent'); setTimeout(showQueue, 2500); }
   } catch (e) {
     entry.done('Not sent: ' + (e.message || e));
@@ -2205,13 +2281,13 @@ function showAction(a, q) {
     if (entry.settled) return; entry.settled = true;
     recordTask(a);
     if (sentByNova(a)) { sendByNova(entry); return; }
-    if (!byVoice) { done('Confirmed \u2014 opened on this device'); runAction(a); return; }
+    if (!byVoice) { done('Confirmed \u2014 opened on this device'); runAction(a); proofCant(entry); return; }
     // Confirmed by voice: iPhone only lets a page open another app straight after a tap, so give him one big button to tap.
     done('Confirmed by voice \u2014 tap below to open ' + appName(a));
     const go = document.createElement('button'); go.type = 'button'; go.className = 'btn';
     go.style.cssText = 'width:100%;background:var(--orange);margin-top:2px'; go.textContent = 'Open ' + appName(a) + ' now';
     go.addEventListener('click', () => { runAction(a); go.textContent = 'Opened \u2713 (tap again if it didn\u2019t)'; });
-    card.appendChild(go); go.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    card.appendChild(go); proofCant(entry); go.scrollIntoView({ behavior: 'smooth', block: 'end' });
     if (!isApplePhone()) { try { runAction(a); } catch {} }
   };
   no.addEventListener('click', () => { entry.cancel(); pendingAction = null; });
@@ -2449,24 +2525,23 @@ function closeSettings() { $('settingsSheet').hidden = true; if (queueRefresh) {
 $('settingsBtn').addEventListener('click', openSettings);
 $('setDone').addEventListener('click', closeSettings);
 $('setBack').addEventListener('click', renderSettingsHome);
-// ---------- 27th Nov 2026 : one switch for Nova's WhatsApp ( reads text, voice notes, images, PDFs and replies or holds ) ----------
-let WA_ON = null;
+// ---------- 27th Nov 2026 : Nova's WhatsApp reading switches, one per number ( reads text, voice notes, images, PDFs and replies or holds ) ----------
+let WA = null; // { own, hotline }
 function waPaint() {
   const b = $('waBtn'); if (!b) return;
-  b.textContent = WA_ON == null ? '💬 …' : WA_ON ? '💬 Reading on' : '💬 Reading off';
-  b.style.background = WA_ON ? 'rgba(34,168,97,.16)' : 'rgba(127,127,127,.15)'; b.style.color = WA_ON ? '#22a861' : 'var(--muted)';
+  const n = WA ? (WA.own ? 1 : 0) + (WA.hotline ? 1 : 0) : -1;
+  b.textContent = n < 0 ? '💬 …' : n === 2 ? '💬 Reading on' : n === 1 ? '💬 Reading 1 of 2' : '💬 Reading off';
+  b.style.background = n > 0 ? 'rgba(34,168,97,.16)' : 'rgba(127,127,127,.15)'; b.style.color = n > 0 ? '#22a861' : 'var(--muted)';
 }
-async function waLoad() {
-  try { const j = await brainCall({ mode: 'tool', name: 'whatsapp_auto_reply', args: {} }); WA_ON = !!JSON.parse(j.output).auto_reply; } catch { WA_ON = null; }
+const waFrom = (j) => ({ own: !!j.auto_reply, hotline: !!j.hotline_reply });
+async function waLoad() { try { WA = waFrom(await novaLink({ name: 'wa_settings' })); } catch { WA = null; } waPaint(); }
+async function waSet(line, on) {
+  const was = WA; WA = { ...(WA || {}), [line]: on }; waPaint();
+  try { WA = waFrom(await novaLink({ name: 'wa_settings', line, on })); }
+  catch { WA = was; waPaint(); $('waBtn').textContent = '💬 Try again'; return; }
   waPaint();
 }
-async function waSet(on) {
-  const was = WA_ON; WA_ON = on; waPaint();
-  try { const j = await brainCall({ mode: 'tool', name: 'whatsapp_auto_reply', args: { on } }); WA_ON = !!JSON.parse(j.output).auto_reply; }
-  catch { WA_ON = was; waPaint(); $('waBtn').textContent = '💬 Try again'; return; }
-  waPaint();
-}
-$('waBtn').addEventListener('click', () => waSet(!WA_ON));
+$('waBtn').addEventListener('click', openSettings);
 function row(icon, label, value, onClick, color) {
   const b = sel('button', 'srow'); b.type = 'button';
   b.appendChild(sel('span', '', icon + '  ' + label));
@@ -2497,7 +2572,8 @@ async function renderSettingsHome() {
     row('🔊', 'Voice', v.charAt(0).toUpperCase() + v.slice(1) + ' ›', () => { closeSettings(); $('voicePickBtn').click(); }),
     row('📍', 'Location', locOn() ? 'On' : 'Off', () => $('locBtn').click(), locOn() ? 'var(--orange)' : ''),
     row('🧭', 'Maps app', mapsApp() === 'google' ? 'Google Maps' : 'Waze', () => { localStorage.setItem('novaMapsApp', mapsApp() === 'google' ? 'waze' : 'google'); renderSettingsHome(); }),
-    row('📖', 'Nova reads my WhatsApp', WA_ON == null ? '…' : WA_ON ? 'On' : 'Off', () => waSet(!WA_ON).then(renderSettingsHome), WA_ON ? '#22a861' : ''),
+    row('📖', 'Nova reads 013-610 0205', WA == null ? '…' : WA.own ? 'On' : 'Off', () => waSet('own', !(WA && WA.own)).then(renderSettingsHome), WA && WA.own ? '#22a861' : ''),
+    row('📖', 'Nova reads AERA Hotline', WA == null ? '…' : WA.hotline ? 'On' : 'Off', () => waSet('hotline', !(WA && WA.hotline)).then(renderSettingsHome), WA && WA.hotline ? '#22a861' : ''),
     row('💬', 'WhatsApp (013-610 0205)', 'Link ›', () => { closeSettings(); linkLine = 'own'; $('linkWaBtn').click(); }),
     row('☎️', 'AERA Hotline (016-663 0205)', 'Link ›', () => { closeSettings(); linkLine = 'hotline'; $('linkWaBtn').click(); }),
   );
