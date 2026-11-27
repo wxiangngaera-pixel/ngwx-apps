@@ -284,7 +284,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261127-2240a';
+const NOVA_BUILD = 'b20261127-2330a';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -709,8 +709,14 @@ async function ask(text) {
 
 async function askAudio(b64, mime) {
   if (busy) return;
+  if (OF && OF.localQ && !pendingFile) {
+    try { setState('thinking', 'Listening…'); const j = await brainCall({ mode: 'transcribe', audio: b64, mime }); const h = (j.heard || '').trim(); setState(null, 'Tap the mic to talk');
+      if (!h) return; if (!ofLocalAnswer(h)) tell(h); }
+    catch (err) { addMsg('err', 'Nova had a problem: ' + (err.message || err)); setState(null, 'Tap the mic to talk'); }
+    return;
+  }
   if (pendingFile) {
-    try { setState('thinking', 'Listening…'); const j = await brainCall({ mode: 'transcribe', audio: b64, mime }); const h = (j.heard || '').trim(); if (wantsPlan(h)) planFromFile(h); else reviewFile(h); }
+    try { setState('thinking', 'Listening…'); const j = await brainCall({ mode: 'transcribe', audio: b64, mime }); const h = (j.heard || '').trim(); if (OF && OF.localQ && ofLocalAnswer(h)) return; fileAnswer(h); }
     catch (err) { addMsg('err', 'Nova had a problem: ' + (err.message || err)); setState(null, 'Tap the mic to talk'); }
     return;
   }
@@ -986,6 +992,7 @@ function liveSend(me, ev) { if (me.dc && me.dc.readyState === 'open') me.dc.send
 // Typed words (the chat box, the customer pop-up): during a live call they go into the live call, so it keeps the whole conversation.
 function tell(text) {
   if (!text) return;
+  if (OF && OF.localQ && ofLocalAnswer(text)) return;
   if (!pendingFile && /文件|档案|檔案|上传|上載|发了|發了|\b(file|upload(ed)?|pdf|attach(ed)?)\b/i.test(text)) {
     addMsg('me', text);
     const r = OF && OF.plan ? 'Got it, Boss. The plan from your file is ready in the order form below. Scroll down to see the boxes.' : 'Boss, I don’t have a file yet. Tap 📎 to attach it, then tell me “build the meal plan”.';
@@ -1819,7 +1826,7 @@ function ofEsc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&a
 function orderForm(pre) {
   setView('chat');
   if (!OF) {
-    OF = { step: 0, email: '', name: '', phone: '', isNew: false, fulfil: '', addr1: '', addr2: '', postcode: '', city: '', state: 'Selangor', date: ofDate(2), slot: '', kind: 'meal', items: {}, picks: { copy: {}, plans: {}, cart: false }, cust: null, basis: '', spice: '', seas: '', pack: '', pay: '', spWhy: '', note: '', q: '', all: [], menu: null, ptext: '', pfile: null, plan: null, pbusy: false, perr: '' };
+    OF = { step: 0, email: '', name: '', phone: '', isNew: false, fulfil: '', addr1: '', addr2: '', postcode: '', city: '', state: 'Selangor', date: ofDate(2), slot: '', kind: 'meal', items: {}, picks: { copy: {}, plans: {}, cart: false }, cust: null, basis: '', spice: '', seas: '', pack: '', pay: '', spWhy: '', note: '', q: '', all: [], menu: null, ptext: '', pfile: null, plan: null, pbusy: false, perr: '', flow: '', per_day: '', days: '', keep: [], reviewed: false, localQ: '' };
     ofLoadAll(0);
     brainCall({ mode: 'tool', name: 'aera_menu_items', args: {} }).then((j) => { OF && (OF.menu = JSON.parse(j.output)); ofDraw(); }).catch(() => { OF && (OF.menu = { meals: [], bundles: [], err: 1 }); ofDraw(); });
   }
@@ -1869,7 +1876,12 @@ function ofFirstGap() { for (let s = 0; s < 6; s++) if (ofCheck(s)) return s; re
 function ofQuestion() {
   const F = OF; if (!F) return '';
   const s = ofFirstGap(); F.step = s;
-  if (s === 0) return 'Who is this order for, Boss? Say their name or email.';
+  F.localQ = '';
+  if (s === 0 && F.flow === 'coach' && F.email && F.name) { const A = ofAeraMeals();
+    if (!+F.per_day) { F.localQ = 'per_day'; return 'How many meals a day for ' + F.name + '? The plan has ' + A.length + ' with AERA food' + (A.length ? ' (Meal ' + A.join(', ') + ')' : '') + '.'; }
+    if (+F.per_day < A.length && F.keep.length !== +F.per_day) { F.localQ = 'keep'; return 'Which ' + (+F.per_day === 1 ? 'meal' : F.per_day + ' meals') + '? Meal ' + A.join(', ') + '.'; }
+    if (!+F.days) { F.localQ = 'days'; return 'How many days a week? 1 to 7.'; } }
+  if (s === 0) return 'Who is this order for, Boss? Say their name or email.' + (F.flow === 'coach' && F.peek && F.peek.person ? ' The plan says ' + F.peek.person + '.' : '');
   if (s === 1) return 'What\u2019s ' + (F.name || 'their') + '\u2019s phone number?';
   if (s === 2) {
     if (!F.fulfil) return 'Delivery or self pick-up?';
@@ -1891,6 +1903,10 @@ function ofQuestion() {
     if (!F.seas) return 'And salt: normal, less salt, or no salt?';
   }
   if (s === 4) return 'MAP bento box or vacuum packed?';
+  if (s === 6 && F.flow === 'coach') {
+    if (!F.reviewed) { F.localQ = 'review'; ofReviewPdf(); return 'Here\u2019s the Meal Plan PDF for your review, Boss. Approve it, or tell me what to change.'; }
+    F.localQ = 'submit'; return 'Should I submit this Meal Plan to the Kitchen?';
+  }
   if (s === 5) return 'How will they pay? Cash, online banking, sponsored, or send it to them to pay?';
   const items = F.kind === 'plan' && F.plan ? 'a ' + F.plan.meals.length + '-box personalised plan, about RM ' + F.plan.total_rm.toFixed(2) + ' for the meals' : Object.values(F.items).filter((i) => i.qty > 0).map((i) => i.qty + ' ' + i.name).concat(ofPickLines().map((x) => x.replace(/<[^>]+>/g, ''))).join(', ');
   return 'That\u2019s ' + items + ' for ' + F.name + ', ' + (F.fulfil === 'pickup' ? 'self pick-up' : 'delivery') + ' on ' + ofSayDay(F.date) + ', ' + ((OF_SLOTS.find((x) => x[0] === F.slot) || [])[1] || '') + ', ' + (F.pack === 'vacuum' ? 'vacuum packed' : 'bento box') + ', ' + ((OF_PAY.find((p) => p[0] === F.pay) || [])[1] || '').toLowerCase() + '. Submit to the Kitchen, or save as a draft?';
@@ -1904,6 +1920,7 @@ async function ofNextQ() {
     const C = F.cust; if (C) { if (F.wantPick === 'last_order' && C.orders[0]) F.picks.copy[C.orders[0].id] = true; if (F.wantPick === 'latest_plan' && C.plans[0]) F.picks.plans[C.plans[0].id] = true; if (F.wantPick === 'cart' && C.cart) F.picks.cart = true; }
     F.wantPick = ''; }
   const gap = ofFirstGap();
+  if (F.wantSubmit && F.flow === 'coach' && !F.reviewed) F.wantSubmit = '';
   if (F.wantSubmit && gap === 6) { const d = F.wantSubmit === 'draft'; F.wantSubmit = ''; setTimeout(() => ofSubmit(d), 1500); return d ? 'Saving it as a draft.' : 'Sending it to the Kitchen now.'; }
   F.wantSubmit = '';
   const q = ofQuestion(); F.lastQ = q; ofDraw(); return q;
@@ -1918,7 +1935,9 @@ function ofPick(c) {
 // what is still missing on a step ('' = fine)
 function ofCheck(s) {
   const F = OF;
-  if (s === 0) return !F.email ? 'Choose or type the customer’s email' : !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(F.email) ? 'That email doesn’t look right' : (!F.name.trim() ? 'Add the customer’s name' : '');
+  if (s === 0) { const base = !F.email ? 'Choose or type the customer’s email' : !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(F.email) ? 'That email doesn’t look right' : (!F.name.trim() ? 'Add the customer’s name' : '');
+    if (base || F.flow !== 'coach') return base;
+    const A = ofAeraMeals(); if (!+F.per_day) return 'How many meals a day?'; if (+F.per_day < A.length && F.keep.length !== +F.per_day) return 'Which meals?'; if (!+F.days) return 'How many days a week?'; return ''; }
   if (s === 1) return String(F.phone).replace(/\D/g, '').length < 9 ? 'Add their phone number' : '';
   if (s === 2) {
     if (!F.fulfil) return 'Delivery or Self Pick-Up?';
@@ -1962,6 +1981,11 @@ function ofDraw() {
       (F.allErr && !F.all.length ? '<button type="button" class="btn ghost" id="ofRetry" style="min-height:38px;font-size:13px">Couldn’t load the customer list · Try again</button>' : '') +
       '<div class="found" id="ofHits" hidden></div>' +
       (F.isNew ? '<div class="note">New customer — add their name:</div><input class="field" id="ofName" autocomplete="off" placeholder="Name" value="' + ofEsc(F.name) + '">' : (F.email && F.name ? '<div class="found">✓ ' + ofEsc(F.name) + ' · ' + ofEsc(F.email) + '</div>' : ''));
+    if (F.flow === 'coach' && F.email && F.name) { const A = ofAeraMeals(), mx = Math.max(4, A.length);
+      b += '<label>Meals a day' + (A.length ? ' <small>(plan has ' + A.length + ' with AERA food)</small>' : '') + '</label>' + ofChips('per_day', Array.from({ length: mx }, (_, i) => [String(i + 1), String(i + 1)]));
+      if (+F.per_day && +F.per_day < A.length) b += '<label>Which meals? <small>(pick ' + F.per_day + ')</small></label><div class="ofch">' + A.map((n) => '<button type="button" data-keep="' + n + '"' + (F.keep.includes(n) ? ' class="on"' : '') + '>Meal ' + n + '</button>').join('') + '</div>';
+      b += '<label>Days a week</label>' + ofChips('days', [1, 2, 3, 4, 5, 6, 7].map((n) => [String(n), String(n)]));
+      b += '<div class="note">📎 ' + ofEsc(F.pfile ? F.pfile.name : '') + (F.pbusy ? ' · building the plan…' : F.plan ? ' · plan ready ✓' : '') + '</div>'; }
   } else if (F.step === 1) {
     b = '<div class="note">' + (F.phone ? 'From their account — change it if needed.' : 'Their phone number:') + '</div><input class="field" id="ofPh" type="tel" inputmode="tel" placeholder="012-345 6789" value="' + ofEsc(F.phone) + '">';
   } else if (F.step === 2) {
@@ -1977,7 +2001,7 @@ function ofDraw() {
       OF_SLOTS.map((s) => '<option value="' + s[0] + '"' + (F.slot === s[0] ? ' selected' : '') + '>' + s[1] + '</option>').join('') + '</select></div></div>' +
       '<input class="field" data-f="note" placeholder="Note for the Kitchen or Rider (optional)" value="' + ofEsc(F.note) + '">';
   } else if (F.step === 3) {
-    b = ofChips('kind', [['meal', 'A la Carte'], ['bundle', 'Meal Bundles'], ['cust', 'From customer'], ['plan', 'Personalised Meal Plan']]);
+    b = F.flow === 'coach' ? '' : ofChips('kind', [['meal', 'A la Carte'], ['bundle', 'Meal Bundles'], ['cust', 'From customer'], ['plan', 'Personalised Meal Plan']]);
     if (F.kind === 'cust') {
       if (F.isNew || !F.email) b += '<div class="note">New customers have no past orders, saved plans or cart yet.</div>';
       else if (!F.cust) { b += '<div class="note">Loading ' + ofEsc(F.name || F.email) + '\u2019s past orders, saved plans and cart\u2026</div>'; ofLoadCust(); }
@@ -2014,8 +2038,9 @@ function ofDraw() {
       L('Packaging', F.pack === 'vacuum' ? 'Vacuum Packed' : 'MAP Bento Box') + L('Payment', (OF_PAY.find((p) => p[0] === F.pay) || [])[1] || '') +
       (F.note ? L('Note', ofEsc(F.note)) : '') + '</div>' +
       '<div class="note">The Kitchen Console opens, gets the Lalamove fee, saves the order and comes straight back here with the Order Number and price.</div>' +
+      (F.flow === 'coach' && !F.reviewed ? '<div class="note">Review the Meal Plan PDF in the chat first.</div><button type="button" class="btn" id="ofRv" style="background:var(--orange)">Open review PDF</button>' :
       '<button type="button" class="btn" id="ofGo" style="background:var(--orange)">' + 'Yes, submit to Kitchen' + '</button>' +
-      '<button type="button" class="btn ghost" id="ofDraft">Save as Draft</button>';
+      '<button type="button" class="btn ghost" id="ofDraft">Save as Draft</button>');
   }
   const miss = F.step < 6 ? ofCheck(F.step) : '';
   w.innerHTML = '<div class="cform ofform" role="dialog" aria-label="New AERA order">' +
@@ -2034,7 +2059,9 @@ function ofWire(w) {
   $$('#ofX').onclick = () => { w.remove(); OF = null; };
   $$('#ofBack').onclick = () => { if (F.step) { F.step--; ofDraw(); } };
   if ($$('#ofNext')) $$('#ofNext').onclick = () => { const m = ofCheck(F.step); if (m) return err(m); F.step++; ofDraw(); };
-  w.querySelectorAll('.ofch button').forEach((bt) => bt.onclick = () => { F[bt.dataset.k] = bt.dataset.v; ofDraw(); });
+  w.querySelectorAll('.ofch button[data-k]').forEach((bt) => bt.onclick = () => { F[bt.dataset.k] = bt.dataset.v; if (bt.dataset.k === 'per_day') F.keep = []; ofDraw(); if (F.flow === 'coach' && F.step === 0) ofCoachNext(); });
+  w.querySelectorAll('[data-keep]').forEach((bt) => bt.onclick = () => { const n = +bt.dataset.keep; F.keep = F.keep.includes(n) ? F.keep.filter((x) => x !== n) : F.keep.concat(n).slice(-(+F.per_day)); F.keep.sort((a, b) => a - b); ofDraw(); ofCoachNext(); });
+  if ($$('#ofRv')) $$('#ofRv').onclick = () => { if (F.pdfUrl) window.open(F.pdfUrl, '_blank'); else ofReviewPdf(); };
   w.querySelectorAll('[data-f]').forEach((el) => { el.oninput = el.onchange = () => { F[el.dataset.f] = el.value; err(''); }; });
   w.querySelectorAll('[data-pk]').forEach((cb) => cb.onchange = () => { const k = cb.dataset.pk; if (k === 'cart') F.picks.cart = cb.checked; else F.picks[k][cb.dataset.id] = cb.checked; err(''); });
   w.querySelectorAll('.ofq button').forEach((bt) => bt.onclick = () => {
@@ -2112,20 +2139,21 @@ async function ofBuildPlan() {
     // 27th Nov 2026 : plans go to nova-plan ( coach plans: AERA part vs customer's home part; Boss's defaults; Cooked Weight )
     const { data: { session } } = await sb.auth.getSession();
     const r = await fetch(SUPABASE_URL + '/functions/v1/nova-plan', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SUPABASE_KEY, Authorization: 'Bearer ' + (session?.access_token || SUPABASE_KEY) },
-      body: JSON.stringify({ text: F.ptext, file: F.pfile ? F.pfile.b64 : undefined, mime: F.pfile ? F.pfile.mime : undefined }) });
+      body: JSON.stringify({ text: F.ptext, file: F.pfile ? F.pfile.b64 : undefined, mime: F.pfile ? F.pfile.mime : undefined,
+        per_day: F.flow === 'coach' ? +F.per_day : undefined, days: F.flow === 'coach' ? +F.days : undefined, keep: F.flow === 'coach' && F.keep.length ? F.keep : undefined }) });
     const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || 'HTTP ' + r.status);
     if (OF !== F) return;
     if (!j.meals || !j.meals.length) { F.perr = 'Nova couldn’t make any boxes from that' + ((j.unmatched || []).length ? ' (not found: ' + j.unmatched.join(', ') + ')' : '') + '.'; return; }
     F.plan = j; if (j.spice && !F.spice) F.spice = j.spice; if (j.seas && !F.seas) F.seas = j.seas; if (j.basis && !F.basis) F.basis = j.basis;
     const t = 'Plan ready, Boss: ' + j.boxes + ' box' + (j.boxes > 1 ? 'es' : '') + ' over ' + j.days + ' day' + (j.days > 1 ? 's' : '') + ', about RM ' + j.total_rm.toFixed(2) + ' for the meals.';
-    const nq = ofQuestion(); OF.lastQ = nq; ofDraw(); const t2 = t + (nq ? ' ' + nq : '');
+    let nq = ofQuestion(); OF.lastQ = nq; ofDraw(); if (F.flow === 'coach') { if (nq === F.saidQ) nq = ''; else F.saidQ = nq; } const t2 = t + (nq ? ' ' + nq : '');
     // 27th Nov 2026 : show the plan itself in the chat too ( the order form starts at the customer step, so the boxes were out of sight )
     const by = {}; j.meals.forEach((m) => { (by[m.day] = by[m.day] || []).push('Meal ' + m.slot + ': ' + m.comps.map((c) => c.name + ' ' + c.grams + 'g').join(' + ') + ' (RM ' + m.price.toFixed(2) + ')'); });
     const list = Object.keys(by).map((d) => 'Day ' + d + '\n' + by[d].join('\n')).join('\n') +
       ((j.home || []).length ? '\n\n🏠 Customer prepares at home\n' + j.home.map((x) => (x.slot ? 'Meal ' + x.slot : 'All day') + ': ' + x.items).join('\n') : '');
     const t3 = t + '\n\n' + list + (nq ? '\n\n' + nq : '');
     addMsg('nova', t3); history.push({ role: 'assistant', content: t3 }); saveOne('assistant', t3); try { speak(t2); } catch {}
-  } catch (e) { if (OF === F) F.perr = 'Couldn’t build the plan: ' + (e.message || e); }
+  } catch (e) { if (OF === F) { F.perr = 'Couldn’t build the plan: ' + (e.message || e); if (F.flow === 'coach') { F.builtFor = ''; addMsg('err', F.perr + '. Tap Rebuild plan in the form to try again.'); } } }
   finally { F.pbusy = false; if (OF === F) ofDraw(); }
 }
 // a file attached with the 📎 and "build a plan / order from this" goes to the plan builder instead of a review
@@ -2133,6 +2161,131 @@ function planFromFile(t) {
   const f = pendingFile; pendingFile = null; $('fileChip').hidden = true;
   addMsg('me', (t || 'Build a plan from this') + ' 📎 ' + f.name);
   orderForm(); OF.kind = 'plan'; OF.ptext = t || ''; OF.pfile = f; OF.plan = null; ofBuildPlan();
+}
+// ---- 27th Nov 2026 : Coach plan flow ( Boss's order ) ----
+// 📎 file → Nova reads it ( peek ) and asks "build it into a Meal Plan?" → Yes → customer → meals a day ( which meals ) → days a week →
+// Nova builds the plan while asking phone → delivery / pick-up → packaging → payment → review PDF in the chat → Approve → "Submit to the Kitchen?" → Confirm.
+let PEEK = null; // { f, info } : the file Nova has read and asked about
+async function novaPlan(body) {
+  const { data: { session } } = await sb.auth.getSession();
+  const r = await fetch(SUPABASE_URL + '/functions/v1/nova-plan', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SUPABASE_KEY, Authorization: 'Bearer ' + (session?.access_token || SUPABASE_KEY) }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || 'HTTP ' + r.status); return j;
+}
+function novaSay(t) { const el = addMsg('nova', t); history.push({ role: 'assistant', content: t }); history = history.slice(-30); saveOne('assistant', t); try { speak(t); } catch {} return el; }
+function meSay(t) { addMsg('me', t); history.push({ role: 'user', content: t }); history = history.slice(-30); saveOne('user', t); }
+function msgBtns(el, list) {
+  const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-top:8px';
+  for (const [label, fn, main] of list) { const b = document.createElement('button'); b.type = 'button'; b.textContent = label;
+    b.style.cssText = 'min-height:36px;padding:0 14px;border-radius:10px;font:inherit;cursor:pointer;border:1px solid var(--line);color:var(--text);background:' + (main ? 'var(--orange);color:#fff;border-color:var(--orange)' : 'none');
+    b.addEventListener('click', () => { if (!label.startsWith('Open') && !label.startsWith('Download')) row.remove(); fn(); }); row.appendChild(b); }
+  el.insertBefore(row, el.querySelector('time')); return row;
+}
+const OF_YES = /^\s*(yes|yeah|yep|yup|ok(ay)?|sure|approve[ds]?|confirm(ed)?|go( ahead)?|do it|build( it)?|submit( it)?|send( it)?|correct|looks good|ya|boleh|betul)\b|^\s*(没问题|好|是|对|可以|行|要|批准|确认|确定|没错|做吧|发吧)/i;
+const OF_NO = /^\s*(no|nope|not( yet)?|don'?t|cancel|change|wait|hold)\b|^\s*(不|别|改|等|先不|tak|tidak|jangan)/i;
+function ofNums(t) { const s = String(t), out = (s.match(/\d+/g) || []).map(Number), W = { 一: 1, 两: 2, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8 };
+  for (const ch of s) if (W[ch]) out.push(W[ch]);
+  const E = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, satu: 1, dua: 2, tiga: 3, empat: 4, lima: 5, enam: 6, tujuh: 7 };
+  for (const k in E) if (new RegExp('\\b' + k + '\\b', 'i').test(s)) out.push(E[k]);
+  return out; }
+function ofAeraMeals() { const P = (OF && OF.peek) || {}; const A = (P.aera_meals || []).map(Number).filter((n) => n > 0); return A.length ? [...new Set(A)].sort((a, b) => a - b) : []; }
+// file attached → read it at once
+async function peekFile(f) {
+  PEEK = null; setState('thinking', 'Reading ' + f.name + '…');
+  f.peekP = novaPlan({ mode: 'peek', file: f.b64, mime: f.mime }).catch((e) => ({ readable: false, error: e.message || String(e) }));
+  const j = await f.peekP; setState(null, 'Tap the mic to talk');
+  if (pendingFile !== f) return;
+  if (j.error) { addMsg('err', 'Nova couldn’t read ' + f.name + ': ' + j.error); return; }
+  if (!j.readable || j.kind === 'other') {
+    const el = novaSay('Got it, Boss: ' + (j.summary || f.name) + ' It doesn’t look like a meal plan. Want me to review it?');
+    msgBtns(el, [['Review it', () => reviewFile('Nova, review this'), true], ['Build a Meal Plan anyway', () => { if (pendingFile === f) { PEEK = { f, info: j }; planStart(f); } }]]); return; }
+  PEEK = { f, info: j }; const A = j.aera_meals || [];
+  const el = novaSay('I can read it, Boss. ' + j.summary + (j.meals_per_day ? ' ' + j.meals_per_day + ' meals a day' + (A.length ? ', ' + A.length + ' with AERA food.' : '.') : '') + ' Should I build it into a Meal Plan?');
+  msgBtns(el, [['Yes, build it', () => { meSay('Yes'); planStart(f); }, true], ['No', () => { meSay('No'); PEEK = null; novaSay('OK Boss. The file is still attached; say “review this” if you want me to check it.'); }]]);
+}
+// Boss's words while a file is attached ( typed or said )
+function fileAnswer(t) {
+  const f = pendingFile;
+  if (OF_YES.test(t) || (wantsPlan(t) && !OF_NO.test(t))) { meSay(t); planStart(f); return; }
+  if (OF_NO.test(t) && PEEK && PEEK.f === f) { meSay(t); PEEK = null; novaSay('OK Boss. The file is still attached; say “review this” if you want me to check it.'); return; }
+  reviewFile(t);
+}
+async function planStart(f) {
+  if (!f) return; if (pendingFile === f) { pendingFile = null; $('fileChip').hidden = true; }
+  const info = (PEEK && PEEK.f === f ? PEEK.info : null) || (f.peekP ? await f.peekP : null) || {}; PEEK = null;
+  if (OF) { document.getElementById('ofWrap')?.remove(); OF = null; }
+  orderForm(); Object.assign(OF, { kind: 'plan', kindSet: true, pfile: f, flow: 'coach', peek: info, basis: 'cooked', spice: 'normal', seas: 'less_salt', step: 0 });
+  const q = ofQuestion(); OF.lastQ = q; OF.saidQ = q; ofDraw(); novaSay('OK Boss. ' + q);
+}
+// after each answer: build when meals a day / which meals / days are in, then the next question
+function ofCoachNext() {
+  const F = OF; if (!F || F.flow !== 'coach') return; const A = ofAeraMeals();
+  if (+F.per_day && +F.days && !(+F.per_day < A.length && F.keep.length !== +F.per_day)) {
+    const k = F.per_day + '|' + F.days + '|' + F.keep.join(','); if (F.builtFor !== k) { F.builtFor = k; F.plan = null; F.reviewed = false; F.ptext = ''; ofBuildPlan(); } }
+  const q = ofQuestion(); F.lastQ = q; ofDraw(); if (q && q !== F.saidQ) { F.saidQ = q; novaSay(q); }
+}
+// Nova's own questions in this flow are answered here, not by the brain
+function ofLocalAnswer(t) {
+  const F = OF; if (!F || !F.localQ || !t) return false; const q = F.localQ, A = ofAeraMeals();
+  if (q === 'per_day') { const n = ofNums(t)[0]; if (!n || n > 8) return false; meSay(t); F.per_day = String(n); F.keep = []; F.saidQ = ''; ofCoachNext(); return true; }
+  if (q === 'keep') { const ns = [...new Set(ofNums(t).filter((n) => A.includes(n)))]; if (!ns.length) return false; meSay(t); F.keep = ns.slice(0, +F.per_day).sort((a, b) => a - b); F.saidQ = ''; ofCoachNext(); return true; }
+  if (q === 'days') { const n = ofNums(t)[0]; if (!n || n > 7) return false; meSay(t); F.days = String(n); F.saidQ = ''; ofCoachNext(); return true; }
+  if (q === 'review') { meSay(t);
+    if (OF_YES.test(t) && !OF_NO.test(t) && t.length < 40) { F.reviewed = true; F.saidQ = ''; ofCoachNext(); return true; }
+    if (OF_NO.test(t) && t.replace(/[\s,.!?。，！？]/g, '').length < 8) { F.localQ = 'change'; novaSay('Tell me what to change, Boss.'); return true; }
+    ofPlanChange(t); return true; }
+  if (q === 'change') { meSay(t); ofPlanChange(t); return true; }
+  if (q === 'submit') { meSay(t);
+    if (OF_YES.test(t) && !OF_NO.test(t)) { F.localQ = ''; ofSubmit(); return true; }
+    F.localQ = ''; novaSay('OK Boss, I’ll keep it here. Tap “Yes, submit to Kitchen” when you’re ready.'); return true; }
+  return false;
+}
+// "change ..." → rebuild from the same file, keeping everything else
+function ofPlanChange(t) {
+  const F = OF, P = F.plan; F.localQ = ''; F.reviewed = false;
+  F.ptext = 'Keep this plan exactly, and only make this change: ' + t + '\n\nCURRENT PLAN:\n' + (P ? P.meals.map((m) => 'Day ' + m.day + ' Meal ' + m.slot + ': ' + m.comps.map((c) => c.name + ' ' + c.grams + 'g').join(' + ')).join('\n') : '');
+  F.plan = null; novaSay('OK Boss, changing it now.'); ofBuildPlan();
+}
+// the review PDF ( made here in the app; nothing is uploaded or sent )
+let jsPdfP = null;
+function loadJsPdf() { return jsPdfP || (jsPdfP = new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+  s.onload = () => res(window.jspdf.jsPDF); s.onerror = () => { jsPdfP = null; rej(new Error('the PDF maker didn’t load')); }; document.head.appendChild(s); })); }
+function pdfTxt(t) { return String(t ?? '').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, '-').replace(/…/g, '...').replace(/[^\x00-\xff]/g, ''); }
+async function ofReviewPdf() {
+  const F = OF; if (!F || !F.plan || F.pdfBusy) return; if (F.pdfUrl && F.pdfPlan === F.plan) return; F.pdfBusy = true;
+  try {
+    const jsPDF = await loadJsPdf(), doc = new jsPDF({ unit: 'mm', format: 'a4' }), P = F.plan, M = 14, W = 182; let y = 18;
+    const line = (t, size = 10, bold = false, grey = false, gap = 0) => { doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(size); doc.setTextColor(grey ? 110 : 30);
+      for (const l of doc.splitTextToSize(pdfTxt(t), W)) { if (y > 282) { doc.addPage(); y = 18; } doc.text(l, M, y); y += size * 0.43; } y += gap; };
+    const today = new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10), slot = (OF_SLOTS.find((s) => s[0] === F.slot) || [])[1] || '';
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(200, 80, 0); doc.text('DRAFT FOR REVIEW', M + W, y, { align: 'right' });
+    line('AERA Meal Prep - Personalised Meal Plan', 16, true, false, 1);
+    line('Prepared ' + cfDay(today) + (F.peek && (F.peek.source || F.peek.person) ? ' · from the ' + [F.peek.source, F.peek.person ? 'plan for ' + F.peek.person : ''].filter(Boolean).join(' ') : ''), 9, false, true, 3);
+    line('Customer: ' + F.name + ' · ' + F.email + (F.phone ? ' · ' + F.phone : ''), 10);
+    line((F.fulfil === 'pickup' ? 'Self Pick-Up: ' : 'Delivery: ') + cfDay(F.date) + (slot ? ', ' + slot : '') + (F.fulfil === 'delivery' ? ' · ' + ofAddress() : ''), 10);
+    line(F.per_day + ' meal' + (+F.per_day > 1 ? 's' : '') + ' a day x ' + P.days + ' day' + (P.days > 1 ? 's' : '') + ' = ' + P.boxes + ' boxes', 10);
+    line(({ cooked: 'Cooked Weight', raw: 'Raw Weight' })[F.basis] + ' · ' + ({ normal: 'Normal Spice', less: 'Less Spicy', none: 'No Spice' })[F.spice] + ' · ' + ({ normal: 'Normal Salt', less_salt: 'Less Salt', no_salt: 'No Salt' })[F.seas] +
+      ' · ' + (F.pack === 'vacuum' ? 'Vacuum Packed' : 'MAP Bento Box') + ' · ' + ((OF_PAY.find((p) => p[0] === F.pay) || [])[1] || ''), 10, false, false, 3);
+    let day = 0;
+    for (const m of P.meals) {
+      if (m.day !== day) { day = m.day; y += 2; line('Day ' + day, 12, true, false, 1); }
+      line('Meal ' + m.slot + ':  ' + m.comps.map((c) => c.name + ' ' + c.grams + 'g').join(' + '), 10);
+      line(m.kcal + ' kcal · Protein ' + m.p + 'g · Carbs ' + m.c + 'g · Fat ' + m.f + 'g · RM ' + m.price.toFixed(2), 8.5, false, true, 1.5);
+    }
+    if ((P.home || []).length) { y += 3; line('Customer prepares at home (not AERA)', 11, true, false, 1); for (const h of P.home) line((h.slot ? 'Meal ' + h.slot : 'All day') + ': ' + h.items, 9, false, false, 0.5); }
+    if ((P.unmatched || []).length) { y += 2; line('Not on AERA’s list: ' + P.unmatched.join(', '), 9, false, true); }
+    y += 4; if (y > 270) { doc.addPage(); y = 18; } doc.setDrawColor(200); doc.line(M, y, M + W, y); y += 6;
+    line(P.boxes + ' boxes · meals total RM ' + P.total_rm.toFixed(2), 12, true, false, 1);
+    line('Packaging per box included. The delivery fee is added by the Kitchen when the order is saved.', 8.5, false, true, 2);
+    if ((P.assumptions || []).length) { line('Nova’s choices', 9, true, true); for (const a of P.assumptions) line('- ' + a, 8, false, true); }
+    const url = URL.createObjectURL(doc.output('blob')), name = 'Meal Plan - ' + (pdfTxt(F.name).trim() || 'customer') + '.pdf';
+    if (F.pdfUrl) URL.revokeObjectURL(F.pdfUrl); F.pdfUrl = url; F.pdfPlan = P;
+    const el = addMsg('nova', '📄 ' + name + '\n' + P.boxes + ' boxes over ' + P.days + ' day' + (P.days > 1 ? 's' : '') + ' · meals RM ' + P.total_rm.toFixed(2));
+    msgBtns(el, [['Open PDF', () => window.open(url, '_blank')], ['Download', () => { const a = document.createElement('a'); a.href = url; a.download = name; a.click(); }],
+      ['Approve', () => { if (OF !== F) return; meSay('Approve'); F.reviewed = true; F.saidQ = ''; ofCoachNext(); }, true],
+      ['Change something', () => { if (OF !== F) return; F.localQ = 'change'; novaSay('Tell me what to change, Boss.'); }]]);
+    ofDraw();
+  } catch (e) { addMsg('err', 'Couldn’t make the review PDF: ' + (e.message || e)); }
+  finally { F.pdfBusy = false; }
 }
 // the customer's home-sourced items ride along in the order note, so the Kitchen knows they're not AERA's
 function ofPlanNote(F) {
@@ -2787,12 +2940,12 @@ $('fileIn').addEventListener('change', () => {
   rd.onload = () => {
     pendingFile = { b64: String(rd.result).split(',')[1], mime: f.type, name: f.name };
     $('fileName').textContent = '📎 ' + f.name; $('fileChip').hidden = false;
-    setState(null, 'Say “build the meal plan” or “review this”, or tap Review');
+    meSay('📎 ' + f.name); peekFile(pendingFile);
   };
   rd.readAsDataURL(f);
 });
 $('fileX').addEventListener('click', () => { pendingFile = null; $('fileChip').hidden = true; setState(null, 'Tap the mic to talk'); });
-$('fileGo').addEventListener('click', () => { unlockVoice(); if (wantsPlan('')) planFromFile('Build the meal plan from this'); else reviewFile('Nova, review this'); });
+$('fileGo').addEventListener('click', () => { unlockVoice(); reviewFile('Nova, review this'); });
 // 27th Nov 2026 : a file goes to the meal plan builder when Boss asks for a plan now, or asked for one in his last few messages ( e.g. "I'll send you a file, plan the meals" → attach → "看看" )
 function wantsPlan(t) {
   if (/\b(review|check)\b|审核|檢查|检查/i.test(t) && !OF_PLANWORDS.test(t)) return false;
@@ -2871,7 +3024,8 @@ $('typeForm').addEventListener('submit', (e) => {
   unlockVoice();
   const t = $('typed').value.trim();
   $('typed').value = '';
-  if (pendingFile) { if (wantsPlan(t)) planFromFile(t); else reviewFile(t); return; }
+  if (OF && OF.localQ && ofLocalAnswer(t)) return;
+  if (pendingFile) { fileAnswer(t); return; }
   tell(t);
 });
 </script>
