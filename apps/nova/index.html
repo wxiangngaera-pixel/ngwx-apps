@@ -284,7 +284,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261127-2330a';
+const NOVA_BUILD = 'b20261127-2345a';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -1927,6 +1927,7 @@ async function ofNextQ() {
 }
 function ofPick(c) {
   const F = OF; if (F.email !== c.email) { F.cust = null; F.picks = { copy: {}, plans: {}, cart: false }; } F.email = c.email; F.name = c.name || ''; F.phone = c.phone ? String(c.phone) : F.phone; F.isNew = false; F.q = c.email;
+  if (F.flow === 'coach') setTimeout(() => { if (OF === F) ofCoachNext(); }, 0);
   brainCall({ mode: 'tool', name: 'aera_customer', args: { query: c.email } }).then((j) => {
     const m = (JSON.parse(j.output).matches || []).find((x) => (x.email || '').toLowerCase() === c.email.toLowerCase());
     if (m && m.last_address && OF && !OF.addr1 && !OF.postcode) { OF.lastAddr = m.last_address; ofDraw(); }
@@ -2073,6 +2074,7 @@ function ofWire(w) {
   if ($$('#ofLast')) $$('#ofLast').onclick = () => { F.addr1 = F.lastAddr; const pc = (F.lastAddr.match(/\b\d{5}\b/) || [''])[0]; if (pc) F.postcode = pc; ofDraw(); };
   if ($$('#ofPh')) $$('#ofPh').oninput = (e) => { F.phone = e.target.value; err(''); };
   if ($$('#ofName')) $$('#ofName').oninput = (e) => { F.name = e.target.value; err(''); };
+  if ($$('#ofName')) $$('#ofName').onchange = () => { if (F.flow === 'coach' && F.name.trim()) ofCoachNext(); };
   if ($$('#ofPick')) $$('#ofPick').onchange = (e) => { const c = F.all[Number(e.target.value)]; if (c && e.target.value !== '') { ofPick(c); ofDraw(); } };
   if ($$('#ofEm')) {
     const em = $$('#ofEm'), hits = $$('#ofHits');
