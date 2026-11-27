@@ -284,7 +284,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261127-2320d';
+const NOVA_BUILD = 'b20261127-2320e';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -2064,7 +2064,7 @@ function ofDraw() {
     const L = (k, v) => '<div class="ofrow"><span>' + k + '</span><span>' + v + '</span></div>';
     b = '<div class="ofsum">' + L('Customer', ofEsc(F.name) + '<br><small>' + ofEsc(F.email) + ' · ' + ofEsc(F.phone) + '</small>') +
       L(F.fulfil === 'pickup' ? 'Self Pick-Up' : 'Delivery', cfDay(F.date) + ', ' + ((OF_SLOTS.find((s) => s[0] === F.slot) || [])[1] || '') + (F.fulfil === 'delivery' ? '<br><small>' + ofEsc(ofAddress()) + '</small>' : '')) +
-      L('Meals', F.kind === 'plan' ? 'Personalised Meal Plan \u00b7 ' + F.plan.meals.length + ' box' + (F.plan.meals.length > 1 ? 'es' : '') + ' over ' + F.plan.days + ' day' + (F.plan.days > 1 ? 's' : '') + '<br><small>Meals about RM ' + F.plan.total_rm.toFixed(2) + '</small>' : (items.map((i) => i.qty + '\u00d7 ' + ofEsc(i.name)).concat(ofPickLines()).join('<br>') || '\u2014')) +
+      L('Meals', F.kind === 'plan' && !F.plan ? 'Personalised Meal Plan \u00b7 updating\u2026' : F.kind === 'plan' ? 'Personalised Meal Plan \u00b7 ' + F.plan.meals.length + ' box' + (F.plan.meals.length > 1 ? 'es' : '') + ' over ' + F.plan.days + ' day' + (F.plan.days > 1 ? 's' : '') + '<br><small>Meals about RM ' + F.plan.total_rm.toFixed(2) + '</small>' : (items.map((i) => i.qty + '\u00d7 ' + ofEsc(i.name)).concat(ofPickLines()).join('<br>') || '\u2014')) +
       L('Weight · Spice · Salt', ({ cooked: 'Cooked', raw: 'Raw' })[F.basis] + ' · ' + ({ normal: 'Normal', less: 'Less Spicy', none: 'No Spice' })[F.spice] + ' · ' + ({ normal: 'Normal', less_salt: 'Less Salt', no_salt: 'No Salt' })[F.seas]) +
       L('Packaging', F.pack === 'vacuum' ? 'Vacuum Packed' : 'MAP Bento Box') + L('Payment', (OF_PAY.find((p) => p[0] === F.pay) || [])[1] || '') +
       (F.note ? L('Note', ofEsc(F.note)) : '') + '</div>' +
@@ -2290,7 +2290,7 @@ function ofPlanChange(t) {
   const F = OF, P = F.plan; F.localQ = 'building'; F.reviewed = false;
   const w = F.basis === 'raw' ? 'g raw' : 'g cooked';
   F.ptext = 'Keep this plan exactly, and only make this change: ' + t + '\n\nCURRENT PLAN:\n' + (P ? P.meals.map((m) => 'Day ' + m.day + ' Meal ' + m.slot + ': ' + m.comps.map((c) => c.name + ' ' + c.grams + w).join(' + ')).join('\n') : '');
-  F.plan = null; novaSay('OK Boss, changing it now.'); ofBuildPlan().finally(() => { if (OF === F && F.localQ === 'building') F.localQ = ''; });
+  F.plan = null; F.step = 3; novaSay('OK Boss, changing it now.'); ofBuildPlan().finally(() => { if (OF === F && F.localQ === 'building') F.localQ = ''; });
 }
 // the review PDF ( made here in the app; nothing is uploaded or sent )
 let jsPdfP = null;
