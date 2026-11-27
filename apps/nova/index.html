@@ -284,7 +284,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261127-2300b';
+const NOVA_BUILD = 'b20261127-2310c';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -527,7 +527,7 @@ function moreButton() {
   $('log').prepend(b);
 }
 // Speech-to-text sometimes "hears" its own hint text when there is silence or echo. Those lines were never said by Boss.
-const FAKE_HEARD = /帮我\s*WhatsApp\s*我的\s*PA\s*[,，]\s*明天有几个\s*AERA|明天有几个\s*AERA\s*order.*(HAUS ON 15|Ukay Spring|Alam Impian).*(HAUS ON 15|Ukay Spring|Alam Impian)|A Malaysian (boss|speaker)|Names:\s*AERA|mixing English, Mandarin|often mixed\. Simplified Chinese/i;
+const FAKE_HEARD = /帮我\s*WhatsApp\s*我的\s*PA\s*[,，]\s*明天有几个\s*AERA|明天有几个\s*AERA\s*order.*(HAUS ON 15|Ukay Spring|Alam Impian).*(HAUS ON 15|Ukay Spring|Alam Impian)|A Malaysian (boss|speaker)|Names:\s*AERA|mixing English, Mandarin|often mixed\. Simplified Chinese|^\s*(英文、中文和马来语|AERA[,，、]\s*Nova[,，、]\s*HAUS ON 15)/i;
 function fakeHeard(t) { return FAKE_HEARD.test(String(t || '')); }
 async function loadHistory() {
   if (historyLoaded) return;
@@ -925,8 +925,12 @@ function liveHoldSync() {
   liveSend(me, { type: 'session.update', session: { type: 'realtime', audio: { input: { turn_detection: { type: 'semantic_vad', eagerness: 'high', create_response: !h, interrupt_response: true } } } } });
 }
 setInterval(liveHoldSync, 400);
-function liveSay(text) { const me = live; if (!me || !me.dc || me.dc.readyState !== 'open') return;
+function liveSay(text) { const me = live; if (!me || !me.dc || me.dc.readyState !== 'open') return; (me.sayQ = me.sayQ || []).push(text); if (!me.busyResp) liveFlush(me); }
+function liveFlush(me) { if (!me.sayQ || !me.sayQ.length || me.busyResp) return; const text = me.sayQ.splice(0).join(' '); me.busyResp = true;
   liveSend(me, { type: 'response.create', response: { metadata: { nova: 'say' }, instructions: 'Read this out loud exactly as written, in its own language, and say nothing else: ' + text } }); }
+// a note for the live voice ( it can't see files ): what the app is doing right now
+function liveNote(text) { const me = live; if (!me || !me.dc || me.dc.readyState !== 'open') return;
+  liveSend(me, { type: 'conversation.item.create', item: { type: 'message', role: 'system', content: [{ type: 'input_text', text: 'NOVA APP NOTE: ' + text + ' Never tell Boss you did not get a file; the app has it. If he asks, say yes, you have it, and carry on.' }] } }); }
 function liveLocal(me, t) {
   if (pendingFile) { fileAnswer(t); return; }
   if (OF && OF.localQ && ofLocalAnswer(t)) return;
@@ -1055,7 +1059,7 @@ async function onLive(me, ev) {
     case 'output_audio_buffer.stopped':
       liveIdle(me); setState('listening', 'Live — just talk'); break;
     case 'response.created':
-      if (ev.response?.metadata?.nova === 'say') me.sayIds.add(ev.response.id); break;
+      me.busyResp = true; if (ev.response?.metadata?.nova === 'say') me.sayIds.add(ev.response.id); break;
     case 'response.output_audio_transcript.done': {
       if (me.sayIds.has(ev.response_id)) break;
       const t = (ev.transcript || '').trim();
@@ -1063,6 +1067,7 @@ async function onLive(me, ev) {
       break;
     }
     case 'response.done': {
+      me.busyResp = false; if (me.sayQ && me.sayQ.length) setTimeout(() => liveFlush(me), 50);
       liveIdle(me);
       const calls = (ev.response?.output || []).filter((o) => o.type === 'function_call');
       if (!calls.length) break;
@@ -1942,7 +1947,7 @@ async function ofNextQ() {
   if (F.wantSubmit && F.flow === 'coach' && !F.reviewed) F.wantSubmit = '';
   if (F.wantSubmit && gap === 6) { const d = F.wantSubmit === 'draft'; F.wantSubmit = ''; setTimeout(() => ofSubmit(d), 1500); return d ? 'Saving it as a draft.' : 'Sending it to the Kitchen now.'; }
   F.wantSubmit = '';
-  const q = ofQuestion(); F.lastQ = q; ofDraw(); return q;
+  const q = ofQuestion(); F.lastQ = q; F.saidQ = q; ofDraw(); return q;
 }
 function ofPick(c) {
   const F = OF; if (F.email !== c.email) { F.cust = null; F.picks = { copy: {}, plans: {}, cart: false }; } F.email = c.email; F.name = c.name || ''; F.phone = c.phone ? String(c.phone) : F.phone; F.isNew = false; F.q = c.email;
@@ -2219,13 +2224,16 @@ async function peekFile(f) {
   if (!j.readable || j.kind === 'other') {
     const el = novaSay('Got it, Boss: ' + (j.summary || f.name) + ' It doesn’t look like a meal plan. Want me to review it?');
     msgBtns(el, [['Review it', () => reviewFile('Nova, review this'), true], ['Build a Meal Plan anyway', () => { if (pendingFile === f) { PEEK = { f, info: j }; planStart(f); } }]]); return; }
-  PEEK = { f, info: j }; const A = j.aera_meals || [];
+  PEEK = { f, info: j }; const A = j.aera_meals || []; liveNote('Boss attached ' + f.name + ' and the app has read it: ' + j.summary + ' The app is asking him whether to build it into a Meal Plan.');
   const el = novaSay('I can read it, Boss. ' + j.summary + (j.meals_per_day ? ' ' + j.meals_per_day + ' meals a day' + (A.length ? ', ' + A.length + ' with AERA food.' : '.') : '') + ' Should I build it into a Meal Plan?');
   msgBtns(el, [['Yes, build it', () => { meSay('Yes'); planStart(f); }, true], ['No', () => { meSay('No'); PEEK = null; novaSay('OK Boss. The file is still attached; say “review this” if you want me to check it.'); }]]);
 }
 // Boss's words while a file is attached ( typed or said )
-function fileAnswer(t) {
-  const f = pendingFile;
+async function fileAnswer(t) {
+  const f = pendingFile; if (!f) return;
+  const review = /\b(review|check)\b|审核|檢查|检查|评估/i.test(t) && !wantsPlan(t);
+  if (!review && !OF_NO.test(t) && !OF_YES.test(t) && f.peekP) { const j = await f.peekP; if (pendingFile !== f) return;
+    if (j && j.readable && j.kind !== 'other') { meSay(t); planStart(f); return; } }
   if (OF_YES.test(t) || (wantsPlan(t) && !OF_NO.test(t))) { meSay(t); planStart(f); return; }
   if (OF_NO.test(t) && PEEK && PEEK.f === f) { meSay(t); PEEK = null; novaSay('OK Boss. The file is still attached; say “review this” if you want me to check it.'); return; }
   reviewFile(t);
@@ -2235,6 +2243,7 @@ async function planStart(f) {
   const info = (PEEK && PEEK.f === f ? PEEK.info : null) || (f.peekP ? await f.peekP : null) || {}; PEEK = null;
   if (OF) { document.getElementById('ofWrap')?.remove(); OF = null; }
   orderForm(); Object.assign(OF, { kind: 'plan', kindSet: true, pfile: f, flow: 'coach', peek: info, basis: 'cooked', spice: 'normal', seas: 'less_salt', step: 0 });
+  liveNote('Boss said yes: the app is building a Meal Plan from ' + f.name + (info.person ? ' ( plan for ' + info.person + ' )' : '') + '. It asks the questions one by one.');
   const q = ofQuestion(); OF.lastQ = q; OF.saidQ = q; ofDraw(); novaSay('OK Boss. ' + q);
 }
 // after each answer: build when meals a day / which meals / days are in, then the next question
