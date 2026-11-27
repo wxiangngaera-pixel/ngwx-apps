@@ -284,7 +284,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261127-2320e';
+const NOVA_BUILD = 'b20261127-2335f';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -2274,15 +2274,20 @@ function ofLocalAnswer(t) {
     if (!v) return false; meSay(t); F.spice = v; F.saidQ = ''; ofCoachNext(); return true; }
   if (q === 'seas') { const v = /no salt|不要盐|无盐|不加盐|tanpa garam|tak (mahu|nak) garam/i.test(t) ? 'no_salt' : /less|少盐|kurang/i.test(t) ? 'less_salt' : /normal|正常|普通|一般|biasa/i.test(t) ? 'normal' : /default|ok|好|可以|yes/i.test(t) ? 'less_salt' : '';
     if (!v) return false; meSay(t); F.seas = v; F.saidQ = ''; ofCoachNext(); return true; }
+  if (q === 'held') { if (/\b(submit|send|hantar)\b|提交|送出|送去|发去/i.test(t)) { meSay(t); F.localQ = ''; ofSubmit(); return true; } return false; }
   if (q === 'building') { meSay(t); novaSay('I’m updating the plan now, Boss. One moment.'); return true; }
   if (q === 'review') { meSay(t);
-    if (OF_YES.test(t) && !OF_NO.test(t) && t.length < 40) { F.reviewed = true; F.saidQ = ''; ofCoachNext(); return true; }
+    if ((OF_YES.test(t) || /\b(approve[ds]?|ok(ay)?|good|correct|fine|lulus)\b|可以|没问题|好了|行了|行啦|对了|没错|批准/i.test(t)) && !OF_NO.test(t) && t.length < 40) { F.reviewed = true; F.saidQ = ''; ofCoachNext(); return true; }
     if (OF_NO.test(t) && t.replace(/[\s,.!?。，！？]/g, '').length < 8) { F.localQ = 'change'; novaSay('Tell me what to change, Boss.'); return true; }
     ofPlanChange(t); return true; }
   if (q === 'change') { meSay(t); ofPlanChange(t); return true; }
   if (q === 'submit') { meSay(t);
-    if (OF_YES.test(t) && !OF_NO.test(t)) { F.localQ = ''; ofSubmit(); return true; }
-    F.localQ = ''; novaSay('OK Boss, I’ll keep it here. Tap “Yes, submit to Kitchen” when you’re ready.'); return true; }
+    // 27th Nov 2026 : his "yes" can be anywhere in the sentence ( "你去submit啦", "行啦", "你帮我提交" )
+    const no = /\b(no|not yet|don'?t|wait|hold|cancel|later)\b|不要|先不|不用|等等|等一下|别|取消|tak|tidak|jangan|nanti/i.test(t);
+    const yes = /\b(yes|yeah|yep|ok(ay)?|sure|submit|send|go|confirm|do it|proceed|hantar|boleh|ya)\b|提交|送出|送去|发去|发出|可以|好|行|没问题|确认|确定|去吧|做吧|对/i.test(t);
+    if (yes && !no) { F.localQ = ''; ofSubmit(); return true; }
+    if (no) { F.localQ = 'held'; novaSay('OK Boss, I’ll keep it here. Say “submit” or tap “Yes, submit to Kitchen” when you’re ready.'); return true; }
+    novaSay('Submit it to the Kitchen now, Boss? Yes or no?'); return true; }
   return false;
 }
 // "change ..." → rebuild from the same file, keeping everything else
