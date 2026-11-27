@@ -284,7 +284,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261127-1130a';
+const NOVA_BUILD = 'b20261127-2210a';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -2094,6 +2094,7 @@ function ofPlanHtml() {
         '<span class="ofq"><button type="button" data-pdel="' + i + '" aria-label="Remove this box">✕</button></span></div>';
     });
     h += '<div class="ofit"><span><b>' + P.boxes + ' box' + (P.boxes > 1 ? 'es' : '') + ' over ' + P.days + ' day' + (P.days > 1 ? 's' : '') + '</b><small>Packaging per box included · delivery added in the Kitchen</small></span><b>RM ' + P.total_rm.toFixed(2) + '</b></div></div>';
+    if ((P.home || []).length) h += '<div class="note" style="background:rgba(46,160,67,.12);border-radius:10px;padding:8px 10px"><b>🏠 Customer prepares at home</b>' + P.home.map((x) => '<div>' + (x.slot ? 'Meal ' + x.slot : 'All day') + ': ' + ofEsc(x.items) + '</div>').join('') + '<small>Also added to the order note for the Kitchen</small></div>';
     if ((P.assumptions || []).length) h += '<div class="note">Nova assumed: ' + P.assumptions.map(ofEsc).join(' · ') + '</div>';
     if ((P.unmatched || []).length) h += '<div class="note" style="color:var(--orange)">Not on AERA’s list: ' + P.unmatched.map(ofEsc).join(', ') + '</div>';
   }
@@ -2102,10 +2103,14 @@ function ofPlanHtml() {
 async function ofBuildPlan() {
   const F = OF; if (!F || F.pbusy) return; F.pbusy = true; F.perr = ''; ofDraw();
   try {
-    const j = await brainCall({ mode: 'plan', text: F.ptext, file: F.pfile ? F.pfile.b64 : undefined, mime: F.pfile ? F.pfile.mime : undefined });
+    // 27th Nov 2026 : plans go to nova-plan ( coach plans: AERA part vs customer's home part; Boss's defaults; Cooked Weight )
+    const { data: { session } } = await sb.auth.getSession();
+    const r = await fetch(SUPABASE_URL + '/functions/v1/nova-plan', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SUPABASE_KEY, Authorization: 'Bearer ' + (session?.access_token || SUPABASE_KEY) },
+      body: JSON.stringify({ text: F.ptext, file: F.pfile ? F.pfile.b64 : undefined, mime: F.pfile ? F.pfile.mime : undefined }) });
+    const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || 'HTTP ' + r.status);
     if (OF !== F) return;
     if (!j.meals || !j.meals.length) { F.perr = 'Nova couldn’t make any boxes from that' + ((j.unmatched || []).length ? ' (not found: ' + j.unmatched.join(', ') + ')' : '') + '.'; return; }
-    F.plan = j; if (j.spice && !F.spice) F.spice = j.spice; if (j.seas && !F.seas) F.seas = j.seas;
+    F.plan = j; if (j.spice && !F.spice) F.spice = j.spice; if (j.seas && !F.seas) F.seas = j.seas; if (j.basis && !F.basis) F.basis = j.basis;
     const t = 'Plan ready, Boss: ' + j.boxes + ' box' + (j.boxes > 1 ? 'es' : '') + ' over ' + j.days + ' day' + (j.days > 1 ? 's' : '') + ', about RM ' + j.total_rm.toFixed(2) + ' for the meals.';
     const nq = ofQuestion(); OF.lastQ = nq; ofDraw(); const t2 = t + (nq ? ' ' + nq : '');
     addMsg('nova', t2); history.push({ role: 'assistant', content: t2 }); saveOne('assistant', t2); try { speak(t2); } catch {}
@@ -2118,12 +2123,19 @@ function planFromFile(t) {
   addMsg('me', (t || 'Build a plan from this') + ' 📎 ' + f.name);
   orderForm(); OF.kind = 'plan'; OF.ptext = t || ''; OF.pfile = f; OF.plan = null; ofBuildPlan();
 }
+// the customer's home-sourced items ride along in the order note, so the Kitchen knows they're not AERA's
+function ofPlanNote(F) {
+  const H = F.kind === 'plan' && F.plan && F.plan.home || [];
+  if (!H.length) return F.note;
+  const t = 'Customer prepares at home (not AERA): ' + H.map((x) => (x.slot ? 'Meal ' + x.slot : 'All day') + ': ' + x.items).join(' | ');
+  return F.note ? F.note + '\n' + t : t;
+}
 function ofSubmit(draft) {
   const F = OF;
   for (let s = 0; s < (draft ? 1 : 6); s++) { const m = ofCheck(s); if (m) { F.step = s; ofDraw(); const e = document.getElementById('ofErr'); if (e) { e.textContent = m; e.hidden = false; } return; } }
   const items = F.kind === 'plan' ? [] : Object.values(F.items).filter((i) => i.qty > 0).map((i) => ({ kind: i.kind, id: i.id, name: i.name, qty: i.qty }));
   const d = { name: F.name.trim(), email: F.email, phone: String(F.phone).trim(), items, fulfil: F.fulfil, date: F.date, slot: F.slot,
-    address: F.fulfil === 'delivery' ? ofAddress() : '', note: F.note, pack: F.pack, basis: F.basis, seas: F.seas, spice: F.spice,
+    address: F.fulfil === 'delivery' ? ofAddress() : '', note: ofPlanNote(F), pack: F.pack, basis: F.basis, seas: F.seas, spice: F.spice,
     pay: { cash: 'cash', transfer: 'transfer', sponsored: 'cash', send: 'myacct' }[F.pay] };
   if (F.pay === 'sponsored') { d.sp = 'order'; d.spWhy = F.spWhy || 'Sponsored'; }
   if (F.kind !== 'plan') { d.copy = Object.keys(F.picks.copy).filter((k) => F.picks.copy[k]); d.plans = Object.keys(F.picks.plans).filter((k) => F.picks.plans[k]); if (F.picks.cart) d.cart = 1; }
