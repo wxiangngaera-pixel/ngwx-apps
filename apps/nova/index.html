@@ -284,7 +284,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261128-0730a';
+const NOVA_BUILD = 'b20261128-1050a';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -658,12 +658,13 @@ async function streamBrain(body, on) {
 }
 
 async function runBrain(body, typed) {
-  let bubble = null, said = '', heard = typed || '', final = null, ignored = false;
+  let bubble = null, said = '', heard = typed || '', final = null, ignored = false, macTaken = false;
   if (OF && !live) body.form = ofContext();
   try {
     await streamBrain(body, (ev) => {
       if (ev.t !== 'say') dbg('brain ' + ev.t + (ev.error ? ' ' + ev.error : ''));
-      if (ev.t === 'heard') { heard = ev.heard; addMsg('me', ev.heard); }
+      if (ev.t === 'heard') { heard = ev.heard; addMsg('me', ev.heard); if (!pendingFile && (MAC_WORDS.test(heard) || macOn())) macTaken = true; }
+      else if (macTaken) { /* the Mac Helper answers this one */ }
       else if (ev.t === 'say') {
         if (said && (said.trim().endsWith(ev.text.trim()) || /^(okay|ok|got it|alright|好的|收到|baik)[^.!?。！？]{0,14}[.!。！]?$/i.test(ev.text.trim()))) return;  // one acknowledgement is enough
         said += (said ? ' ' : '') + ev.text;
@@ -681,6 +682,7 @@ async function runBrain(body, typed) {
     throw err;
   }
   if (ignored) return 'ignored';
+  if (macTaken) { talkEnd(); macAsk(heard, true); return 'ok'; }
   let reply = (final && final.reply) || said;
   // the New Order form asks its next question itself, right after Nova's short "Got it"
   if (OF && OF.needAsk) { const q = await ofNextQ(); if (q) { reply = (reply ? reply + ' ' : '') + q; if (bubble) bubble.firstChild.nodeValue = reply; else bubble = addMsg('nova', reply); talkSay(q); } }
@@ -1028,7 +1030,9 @@ function liveIdle(me) { clearTimeout(me.idle); me.idle = setTimeout(() => { if (
 function liveSend(me, ev) { if (me.dc && me.dc.readyState === 'open') me.dc.send(JSON.stringify(ev)); }
 // Typed words (the chat box, the customer pop-up): during a live call they go into the live call, so it keeps the whole conversation.
 // ---- 28th Nov 2026 : Nova ↔ MacBook ( Nova Mac Helper ) ----
-const MAC_WORDS = /\b(mac|macbook|laptop|my downloads|downloads folder|my desktop|desktop folder|my documents|finder|my screen|on screen)\b|电脑|屏幕|桌面|下载|文件夹|komputer|skrin/i;
+const MAC_WORDS = /\b(mac|macbook|laptop|desktop|downloads?|documents folder|finder|my screen|on (my |the )?screen)\b|\b(move|rename|trash|delete)\b.{0,30}\bfiles?\b|电脑|屏幕|桌面|下载|文件夹|komputer|skrin/i;
+let macFollow = null; // { until, hist } : Nova just asked him something about the Mac ( e.g. "which file?" )
+const macOn = () => macFollow && Date.now() < macFollow.until;
 const MAC_TOOL_LIVE = { type: 'function', name: 'mac', description: 'Do something on Boss\'s MacBook ( Nova Mac Helper ): find / list / open / read files in Downloads, Desktop, Documents; open apps or websites; look at his screen ( only when he asks ); run a Mac Shortcut; move / rename / trash a file ( the Mac asks him Allow first ). read attaches PDFs and images in his Nova chat.',
   parameters: { type: 'object', properties: { kind: { type: 'string', enum: ['find', 'list', 'open', 'read', 'screen', 'shortcut', 'move', 'rename', 'trash'] }, query: { type: 'string' }, path: { type: 'string' }, app: { type: 'string' }, url: { type: 'string' }, name: { type: 'string' }, to: { type: 'string' } }, required: ['kind'] } };
 async function macDo(body) {
@@ -1036,17 +1040,18 @@ async function macDo(body) {
   const r = await fetch(SUPABASE_URL + '/functions/v1/nova-macdo', { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SUPABASE_KEY, Authorization: 'Bearer ' + (session?.access_token || '') }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status); return j;
 }
-async function macAsk(text) {
-  addMsg('me', text); history.push({ role: 'user', content: text }); history = history.slice(-30); saveOne('user', text);
+async function macAsk(text, shown) {
+  if (!shown) addMsg('me', text); history.push({ role: 'user', content: text }); history = history.slice(-30); saveOne('user', text);
   setState('thinking', 'Asking your Mac…');
-  try { const j = await macDo({ mode: 'ask', text }); novaSay(j.say || 'Done, Boss.'); }
+  try { const hist = macOn() ? macFollow.hist : []; const j = await macDo({ mode: 'ask', text, history: hist }); const say = j.say || 'Done, Boss.'; novaSay(say);
+    macFollow = /[?？]\s*$/.test(say) ? { until: Date.now() + 120e3, hist: [...hist, { role: 'user', content: text }, { role: 'assistant', content: say }].slice(-6) } : null; }
   catch (e) { addMsg('err', 'Nova couldn’t reach your Mac: ' + (e.message || e)); }
   finally { setState(null, 'Tap the mic to talk'); }
 }
 function tell(text) {
   if (!text) return;
   if (OF && OF.localQ && ofLocalAnswer(text)) return;
-  if (!pendingFile && MAC_WORDS.test(text) && !(live && live.dc && live.dc.readyState === 'open')) { macAsk(text); return; }
+  if (!pendingFile && (MAC_WORDS.test(text) || macOn()) && !(live && live.dc && live.dc.readyState === 'open')) { macAsk(text); return; }
   if (!pendingFile && /文件|档案|檔案|上传|上載|发了|發了|\b(file|upload(ed)?|pdf|attach(ed)?)\b/i.test(text)) {
     addMsg('me', text);
     const r = OF && OF.plan ? 'Got it, Boss. The plan from your file is ready in the order form below. Scroll down to see the boxes.' : 'Boss, I don’t have a file yet. Tap 📎 to attach it, then tell me “build the meal plan”.';
@@ -1078,6 +1083,7 @@ async function onLive(me, ev) {
       // 28th Nov 2026 : give the live voice the MacBook tool too ( keeps all its other tools )
       const t = (ev.session && ev.session.tools) || [];
       if (!t.some((x) => x.name === 'mac')) liveSend(me, { type: 'session.update', session: { type: 'realtime', tools: [...t, MAC_TOOL_LIVE] } });
+      liveSend(me, { type: 'conversation.item.create', item: { type: 'message', role: 'system', content: [{ type: 'input_text', text: 'NOVA APP NOTE: You CAN work on Boss\'s MacBook with the mac tool (find, list, open, read files in Downloads, Desktop, Documents; open apps and websites; look at his screen when he asks; run his Mac Shortcuts; move, rename or trash a file after he clicks Allow on the Mac). Never say you can\'t control his computer. If he doesn\'t say which file, use find or list first and ask which one.' }] } });
       break;
     }
     case 'input_audio_buffer.speech_started':
