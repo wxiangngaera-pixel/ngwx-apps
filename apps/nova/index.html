@@ -284,7 +284,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261128-1300a';
+const NOVA_BUILD = 'b20261128-1310a';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -2839,7 +2839,7 @@ async function openInbox(tab) {
   const list = inboxTab === 'held' ? held : all.filter((r) => r.line === inboxTab);
   const un = (l) => all.filter((r) => r.line === l && !r.read_at).length;
   const chip = (k, label) => '<button type="button" data-tab="' + k + '" style="border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer;' + (inboxTab === k ? 'background:var(--orange);color:#fff;border:1px solid var(--orange)' : 'background:none;color:var(--text);border:1px solid var(--line)') + '">' + label + '</button>';
-  o.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b style="font-size:18px">💬 WhatsApp</b><button type="button" id="inboxDone" style="background:none;border:0;color:var(--orange);font:inherit;font-weight:600;cursor:pointer">Done</button></div>' +
+  o.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b style="font-size:18px">💬 WhatsApp</b><span style="display:flex;gap:10px;align-items:center">' + (un('hotline') + un('own') ? '<button type="button" id="inboxPlay" style="background:var(--orange);color:#fff;border:0;border-radius:8px;padding:5px 12px;font:inherit;cursor:pointer">▶ Play ' + (un('hotline') + un('own')) + ' new</button>' : '') + '<button type="button" id="inboxDone" style="background:none;border:0;color:var(--orange);font:inherit;font-weight:600;cursor:pointer">Done</button></span></div>' +
     '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' + chip('hotline', '☎️ Hotline' + (un('hotline') ? ' · ' + un('hotline') + ' new' : '')) + chip('own', '💬 013' + (un('own') ? ' · ' + un('own') + ' new' : '')) + chip('held', 'Held for you' + (held.length ? ' · ' + held.length : '')) + '</div>' +
     '<div id="inboxList" style="flex:1;overflow:auto;display:flex;flex-direction:column;gap:8px"></div>';
   const L = o.querySelector('#inboxList');
@@ -2873,11 +2873,12 @@ async function openInbox(tab) {
     }
     L.appendChild(c);
   }
-  o.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => openInbox(b.dataset.tab));
-  o.querySelector('#inboxDone').onclick = () => { o.hidden = true; inboxCount(); };
-  // opening a tab marks its messages as read
-  const unreadIds = (inboxTab === 'held' ? held : list).filter((r) => !r.read_at).map((r) => r.wa_id);
-  if (unreadIds.length) sb.from('nova_wa_unread').update({ read_at: new Date().toISOString() }).in('wa_id', unreadIds).then(() => inboxCount());
+  // what he has looked at is marked read when he leaves the tab ( Done or another tab ); ▶ Play reads them out first
+  const seenIds = (inboxTab === 'held' ? held : list).filter((r) => !r.read_at).map((r) => r.wa_id);
+  const markSeen = () => seenIds.length ? sb.from('nova_wa_unread').update({ read_at: new Date().toISOString() }).in('wa_id', seenIds).then(() => inboxCount()) : Promise.resolve();
+  o.querySelectorAll('[data-tab]').forEach((b) => b.onclick = async () => { await markSeen(); openInbox(b.dataset.tab); });
+  o.querySelector('#inboxDone').onclick = () => { o.hidden = true; markSeen(); };
+  if (o.querySelector('#inboxPlay')) o.querySelector('#inboxPlay').onclick = async () => { unlockVoice(); o.hidden = true; await playNew(); if (PL) { PL.playing = true; plGo(); } };
 }
 $('waBtn').addEventListener('click', () => openInbox());
 // ---- 28th Nov 2026 : while Nova is open, WhatsApp alerts appear in the chat and Nova says them out loud ( once each ) ----
@@ -2908,7 +2909,49 @@ async function alertsCheck() {
   if ((data || []).length) inboxCount();
 }
 setInterval(() => alertsCheck().catch(() => {}), 10000);
-if (new URLSearchParams(location.search).get('inbox')) setTimeout(() => openInbox(), 1500);
+// ---- 28th Nov 2026 : 🔊 play new WhatsApps one by one ( one tap to start: iPhone needs it ) ----
+let PL = null; // { rows, i, paused, stop }
+function plSay(r) {
+  const where = r.line === 'hotline' ? 'on the Hotline' : 'on your 013';
+  const what = r.status === 'replied' ? (r.note === 'you replied' ? ' You replied.' : ' I\u2019ve replied: ' + String(r.reply || '').slice(0, 160)) : r.status === 'held' ? ' This one needs you' + (r.note ? ': ' + r.note : '') + '.' : r.status === 'skipped' ? ' No reply needed.' : ' I\u2019m still on it.';
+  return (r.who || 'Someone') + ' ' + where + ' said: ' + String(r.text || '').slice(0, 240) + '.' + what;
+}
+function plCard() {
+  let c = document.getElementById('playCard');
+  if (!PL) { if (c) c.remove(); return; }
+  if (!c) { c = document.createElement('div'); c.id = 'playCard'; c.style.cssText = 'position:fixed;left:12px;right:12px;top:calc(env(safe-area-inset-top) + 64px);z-index:55;background:var(--card);border:1px solid var(--orange);border-radius:14px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.35);color:var(--text)'; document.body.appendChild(c); }
+  const r = PL.rows[PL.i], n = PL.rows.length, started = PL.i > 0 || PL.playing;
+  const btn = (id, label, main) => '<button type="button" id="' + id + '" style="border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer;' + (main ? 'background:var(--orange);color:#fff;border:0' : 'background:none;color:var(--text);border:1px solid var(--line)') + '">' + label + '</button>';
+  c.innerHTML = '<div style="display:flex;justify-content:space-between"><b>🔊 ' + n + ' new WhatsApp</b><span style="color:var(--muted);font-size:12px">' + (PL.i + 1) + ' of ' + n + '</span></div>' +
+    '<div style="margin-top:6px">' + (r.line === 'hotline' ? '☎️ Hotline' : '💬 013') + ' · <b>' + ofEsc(r.who || r.phone) + '</b>' + (r.status === 'held' ? ' <span style="color:var(--orange)">needs you</span>' : '') + '</div>' +
+    '<div style="color:var(--muted)">“' + ofEsc(String(r.text || '').slice(0, 160)) + '”</div>' +
+    '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">' + (PL.playing && !PL.paused ? btn('plPause', '⏸ Pause', true) : btn('plPlay', started ? '▶ Resume' : '▶ Play', true)) + btn('plNext', '⏭ Next') + (r.status === 'held' ? btn('plReply', 'Reply') : '') + btn('plStop', '■ Stop') + '</div>';
+  const on = (id, f) => { const b = c.querySelector('#' + id); if (b) b.onclick = f; };
+  on('plPlay', () => { unlockVoice(); PL.paused = false; PL.playing = true; plGo(); });
+  on('plPause', () => { PL.paused = true; novaHush(); plCard(); });
+  on('plNext', () => { novaHush(); plMark(PL.rows[PL.i]); if (PL.i + 1 >= PL.rows.length) return plEnd(); PL.i++; plCard(); if (PL.playing && !PL.paused) setTimeout(plGo, 300); });
+  on('plStop', () => { novaHush(); plEnd(); });
+  on('plReply', () => { const keep = PL.rows[PL.i]; novaHush(); plEnd(); openInbox('held').then(() => { const b = [...document.querySelectorAll('#inboxList button')].find((x) => x.textContent === 'Reply'); if (b && keep) b.click(); }); });
+}
+function plMark(r) { if (r && !r.read_at) { r.read_at = 1; sb.from('nova_wa_unread').update({ read_at: new Date().toISOString() }).eq('wa_id', r.wa_id).then(() => inboxCount()); } }
+function plEnd() { PL = null; followUpBlocked = false; plCard(); }
+function plGo() {
+  if (!PL || PL.paused) return;
+  const r = PL.rows[PL.i]; followUpBlocked = true; plCard(); speak((PL.i === 0 ? 'Boss, ' : '') + plSay(r));
+  const wait = setInterval(() => {
+    if (!PL || PL.paused) { clearInterval(wait); return; }
+    if (talk) return; clearInterval(wait); plMark(r);
+    if (PL.i + 1 >= PL.rows.length) { setTimeout(() => { if (PL && !PL.paused) { speak('That\u2019s all, Boss.'); plEnd(); } }, 600); return; }
+    PL.i++; plCard(); setTimeout(plGo, 800);
+  }, 400);
+}
+async function playNew() {
+  const { data } = await sb.from('nova_wa_unread').select('wa_id,line,phone,who,text,status,reply,note,created_at,read_at').is('read_at', null).order('created_at').limit(30);
+  if (!data || !data.length) { addMsg('nova', 'No new WhatsApp, Boss.'); return; }
+  PL = { rows: data, i: 0, paused: false, playing: false }; plCard();
+}
+// opened from a notification → the play card waits for one tap
+if (new URLSearchParams(location.search).get('inbox')) setTimeout(() => playNew().catch(() => {}), 1500);
 function row(icon, label, value, onClick, color) {
   const b = sel('button', 'srow'); b.type = 'button';
   b.appendChild(sel('span', '', icon + '  ' + label));
