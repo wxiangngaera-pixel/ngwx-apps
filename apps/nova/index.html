@@ -284,7 +284,7 @@ const SUPABASE_URL = 'https://cnopuhvwtjoqfytxeynn.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_hM5JZcyeRKMx3g4tfpoXzA_-82aXHin';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 // Auto-update: the iPhone home-screen app keeps an old copy. On open/return, check for a newer build and reload.
-const NOVA_BUILD = 'b20261128-1050b';
+const NOVA_BUILD = 'b20261128-1110a';
 async function checkUpdate() {
   try {
     const r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
@@ -2818,7 +2818,69 @@ async function waSet(line, on) {
   catch { WA = was; waPaint(); $('waBtn').textContent = '💬 Try again'; return; }
   waPaint();
 }
-$('waBtn').addEventListener('click', openSettings);
+// ---------- 28th Nov 2026 : 💬 WhatsApp inbox ( Hotline + 013 ), unread dots, Boss's own replies ----------
+let inboxTab = 'hotline', inboxUnread = { own: 0, hotline: 0 };
+const fmtT = (iso) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kuala_Lumpur', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(iso)).replace(' am', ' am').replace(' pm', ' pm');
+async function inboxCount() {
+  try { const { data } = await sb.from('nova_wa_unread').select('line').is('read_at', null).limit(200);
+    inboxUnread = { own: 0, hotline: 0 }; for (const r of data || []) inboxUnread[r.line]++;
+    const n = inboxUnread.own + inboxUnread.hotline, b = $('waBtn');
+    if (b && n) { b.textContent = '💬 ' + n + ' new'; b.style.background = 'rgba(240,122,26,.18)'; b.style.color = 'var(--orange)'; } else waPaint();
+  } catch {}
+}
+setInterval(() => { if (document.visibilityState === 'visible') inboxCount(); }, 30000); setTimeout(inboxCount, 2500);
+async function openInbox(tab) {
+  if (tab) inboxTab = tab;
+  let o = document.getElementById('inboxSheet');
+  if (!o) { o = document.createElement('div'); o.id = 'inboxSheet'; o.style.cssText = 'position:fixed;inset:0;z-index:60;background:var(--bg);color:var(--text);display:flex;flex-direction:column;padding:calc(env(safe-area-inset-top) + 12px) 14px 14px'; document.body.appendChild(o); }
+  o.hidden = false;
+  const { data: rows } = await sb.from('nova_wa_unread').select('wa_id,line,phone,who,text,status,reply,note,created_at,read_at').order('created_at', { ascending: false }).limit(150);
+  const all = rows || [], held = all.filter((r) => r.status === 'held');
+  const list = inboxTab === 'held' ? held : all.filter((r) => r.line === inboxTab);
+  const un = (l) => all.filter((r) => r.line === l && !r.read_at).length;
+  const chip = (k, label) => '<button type="button" data-tab="' + k + '" style="border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer;' + (inboxTab === k ? 'background:var(--orange);color:#fff;border:1px solid var(--orange)' : 'background:none;color:var(--text);border:1px solid var(--line)') + '">' + label + '</button>';
+  o.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b style="font-size:18px">💬 WhatsApp</b><button type="button" id="inboxDone" style="background:none;border:0;color:var(--orange);font:inherit;font-weight:600;cursor:pointer">Done</button></div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' + chip('hotline', '☎️ Hotline' + (un('hotline') ? ' · ' + un('hotline') + ' new' : '')) + chip('own', '💬 013' + (un('own') ? ' · ' + un('own') + ' new' : '')) + chip('held', 'Held for you' + (held.length ? ' · ' + held.length : '')) + '</div>' +
+    '<div id="inboxList" style="flex:1;overflow:auto;display:flex;flex-direction:column;gap:8px"></div>';
+  const L = o.querySelector('#inboxList');
+  if (!list.length) L.innerHTML = '<div style="color:var(--muted);padding:20px 4px">' + (inboxTab === 'held' ? 'Nothing is waiting for you.' : 'No messages yet on this line. Nova only sees messages from when the line was linked.') + '</div>';
+  for (const r of list) {
+    const c = document.createElement('div'); c.style.cssText = 'border:1px solid ' + (r.status === 'held' ? 'var(--orange)' : 'var(--line)') + ';border-radius:12px;padding:10px 12px';
+    const st = r.status === 'replied' ? '<div style="color:#22a861;font-size:13px;margin-top:4px">✓ ' + (r.note === 'you replied' ? 'You replied' : 'Nova replied') + ': “' + ofEsc((r.reply || '').slice(0, 220)) + '”</div>'
+      : r.status === 'held' ? '<div style="color:var(--orange);font-size:13px;margin-top:4px">⏸ Held for you' + (r.note ? ': ' + ofEsc(r.note) : '') + '</div>'
+      : r.status === 'skipped' ? '<div style="color:var(--muted);font-size:13px;margin-top:4px">No reply needed' + (r.note ? ' (' + ofEsc(r.note) + ')' : '') + '</div>'
+      : '<div style="color:var(--muted);font-size:13px;margin-top:4px">Nova is on it…</div>';
+    c.innerHTML = '<div style="display:flex;justify-content:space-between;gap:8px"><b>' + (r.read_at ? '' : '<span style="color:var(--orange)">● </span>') + ofEsc(r.who || r.phone) + (inboxTab === 'held' ? ' <span style="color:var(--muted);font-weight:400">' + (r.line === 'hotline' ? '☎️ Hotline' : '💬 013') + '</span>' : '') + '</b><span style="color:var(--muted);font-size:12px;white-space:nowrap">' + fmtT(r.created_at) + '</span></div>' +
+      '<div style="margin-top:2px">“' + ofEsc((r.text || '').slice(0, 400)) + '”</div>' + st;
+    if (r.status === 'held') {
+      const row2 = document.createElement('div'); row2.style.cssText = 'display:flex;gap:6px;margin-top:8px;flex-wrap:wrap';
+      const rb = document.createElement('button'); rb.type = 'button'; rb.textContent = 'Reply'; rb.style.cssText = 'background:var(--orange);color:#fff;border:0;border-radius:8px;padding:6px 14px;font:inherit;cursor:pointer';
+      const wb = document.createElement('a'); wb.textContent = 'Open in WhatsApp'; wb.href = 'https://wa.me/' + String(r.phone || '').replace(/\D/g, ''); wb.target = '_blank'; wb.style.cssText = 'border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 12px;text-decoration:none';
+      rb.onclick = () => {
+        if (c.querySelector('textarea')) return;
+        const ta = document.createElement('textarea'); ta.rows = 3; ta.placeholder = 'Your reply to ' + (r.who || r.phone) + '…'; ta.style.cssText = 'width:100%;margin-top:8px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--text);padding:8px;font:inherit;box-sizing:border-box';
+        const sb2 = document.createElement('button'); sb2.type = 'button'; sb2.textContent = 'Send from ' + (r.line === 'hotline' ? 'Hotline 016-663 0205' : '013-610 0205'); sb2.style.cssText = 'margin-top:6px;background:var(--orange);color:#fff;border:0;border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer';
+        const msg = document.createElement('div'); msg.style.cssText = 'font-size:13px;margin-top:6px;color:var(--muted)';
+        sb2.onclick = async () => {
+          const text = ta.value.trim(); if (!text) { msg.textContent = 'Type your reply first.'; return; }
+          sb2.disabled = true; msg.textContent = 'Sending…';
+          try { await novaLink({ name: 'wa_reply', line: r.line, to: r.phone, text, ids: [r.wa_id] }); msg.textContent = '✓ Sent'; setTimeout(() => openInbox(), 900); }
+          catch (e) { sb2.disabled = false; msg.textContent = 'Not sent: ' + (e.message || e); }
+        };
+        c.append(ta, sb2, msg); ta.focus();
+      };
+      row2.append(rb, wb); c.appendChild(row2);
+    }
+    L.appendChild(c);
+  }
+  o.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => openInbox(b.dataset.tab));
+  o.querySelector('#inboxDone').onclick = () => { o.hidden = true; inboxCount(); };
+  // opening a tab marks its messages as read
+  const unreadIds = (inboxTab === 'held' ? held : list).filter((r) => !r.read_at).map((r) => r.wa_id);
+  if (unreadIds.length) sb.from('nova_wa_unread').update({ read_at: new Date().toISOString() }).in('wa_id', unreadIds).then(() => inboxCount());
+}
+$('waBtn').addEventListener('click', () => openInbox());
+if (new URLSearchParams(location.search).get('inbox')) setTimeout(() => openInbox(), 1500);
 function row(icon, label, value, onClick, color) {
   const b = sel('button', 'srow'); b.type = 'button';
   b.appendChild(sel('span', '', icon + '  ' + label));
